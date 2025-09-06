@@ -165,6 +165,11 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       if (is_shift_pressed) {
         fleet_bar->RequestSelect(ship_select_request);
       } else {
+        std::chrono::time_point<std::chrono::steady_clock> select_now = std::chrono::steady_clock::now();
+        std::chrono::milliseconds                          select_diff =
+            std::chrono::duration_cast<std::chrono::milliseconds>(select_now - select_clock);
+        spdlog::info("DBG: select_diff was {}ms", select_diff.count());
+        
         if (can_locate && fleet_bar->IsIndexSelected(ship_select_request)) {
           auto fleet = fleet_bar->_fleetPanelController->fleet;
           if (NavigationSectionManager::Instance() && NavigationSectionManager::Instance()->SNavigationManager) {
