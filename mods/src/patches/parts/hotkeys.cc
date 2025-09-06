@@ -197,14 +197,8 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
       }
 
+      select_clock = select_now;
       return;
-    }
-    // }
-  }
-
-        select_clock = select_now;
-        return;
-      }
     }
   }
 
