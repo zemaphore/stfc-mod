@@ -179,6 +179,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         } else {
           fleet_bar->RequestSelect(ship_select_request);
         }
+        select_clock = select_now;
       }
 
       if (can_locate && fleet_bar->IsIndexSelected(ship_select_request)) {
@@ -202,7 +203,6 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
       }
 
-      select_clock = select_now;
       return;
     }
   }
