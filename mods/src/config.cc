@@ -61,7 +61,7 @@ void Config::Save(toml::table config, std::string_view filename, bool apply_warn
     config_file << "#######################################################################\n";
     config_file << "####                                                               ####\n";
     config_file << "#### NOTE: This file is not the configuration file that is used    ####\n";
-    config_file << "####       by the STFC community patch.  It is provided to help    ####\n";
+    config_file << "####       by the STFC Community Mod.  It is provided to help      ####\n";
     config_file << "####       see what configuration is being used by the runtime     ####\n";
     config_file << "####       and any desired settings should be copied to the same   ####\n";
     config_file << "####       section in: " << defaultFile << "\n";
@@ -142,8 +142,8 @@ float Config::GetDPI()
     auto horizontalScale = ((double)cxPhysical / (double)cxLogical);
     auto verticalScale   = ((double)cyPhysical / (double)cyLogical);
 
-    spdlog::debug("Horizonzal scaling: {}", horizontalScale);
-    spdlog::debug("Vertical scaling: {}", verticalScale);
+    spdlog::trace("Horizonzal scaling: {}", horizontalScale);
+    spdlog::trace("Vertical scaling: {}", verticalScale);
 
     dpi         = horizontalScale;
     lastMonitor = monitor;
@@ -238,7 +238,7 @@ inline T get_config_or_default(toml::table config, toml::table& new_config, std:
 
   sectionTable.as_table()->insert_or_assign(item, final_value);
 
-  spdlog::info("config value {}.{} value: {}", section, item, final_value);
+  spdlog::debug("config value {}.{} value: {}", section, item, final_value);
 
   return (T)final_value;
 }
@@ -279,7 +279,7 @@ void read_sync_targets(toml::table config, toml::table& new_config, std::map<std
     if (sync_targets.emplace(url.value(), token.value()).second) {
       new_config["sync"]["targets"].as_table()->emplace<toml::table>(
           key, toml::table{{"url", url.value()}, {"token", token.value()}});
-      spdlog::info("config value sync.targets.{} url: {}, token: {}", key, url.value(), token.value());
+      spdlog::debug("config value sync.targets.{} url: {}, token: {}", key, url.value(), token.value());
     }
   }
 }
@@ -318,37 +318,133 @@ void parse_config_shortcut(toml::table config, toml::table& new_config, std::str
   auto shortcut = MapKey::GetShortcuts(gameFunction);
   sectionTable.as_table()->insert_or_assign(item, shortcut);
 
-  spdlog::info("shortcut value {}.{} value: {}", section, item, shortcut);
+  spdlog::debug("shortcut value {}.{} value: {}", section, item, shortcut);
+}
+
+void migrate_mac_config_if_needed(const char* filename)
+{
+#if !_WIN32
+  namespace fs = std::filesystem;
+
+  fs::path file_path = File::MakePath(filename);
+  auto     new_dir   = file_path.parent_path();
+  if (fs::exists(file_path) || fs::exists(new_dir))
+    return;
+
+  spdlog::info("mac config migration: config dir does not exist, checking for migration...");
+
+  fs::path old_path = File::MakePath(filename, false, true);
+  if (!fs::exists(old_path)) {
+    spdlog::info("mac config migration: old config does not exist. nothing to migrate.");
+    return;
+  }
+
+  auto stat = fs::status(old_path);
+  if (stat.type() == fs::file_type::regular) {
+    spdlog::info("mac config migration: old config found. attempting to migrate...");
+
+    try {
+      // move
+      auto old_dir = old_path.parent_path();
+      fs::rename(old_dir, new_dir);
+
+      // re-create old dir, create symlink
+      fs::create_directories(old_dir);
+      fs::create_symlink(file_path, old_path);
+
+      // drop update-info.txt
+      std::ofstream info;
+      info.open(old_dir / "update-info.txt");
+      info << "Your config has been moved!\n\n";
+      info << "You can now find your config at " << file_path << "\n\n";
+      info << "A symlink has been placed for your convenience, but it is generally recommended, that you use the new "
+              "path and delete this directory going forward.";
+      info.close();
+
+      spdlog::info("mac config migration: config migration done.");
+    } catch (std::exception& ex) {
+      spdlog::warn("mac config migration: migration failed = {}", ex.what());
+    }
+  }
+#endif
+}
+
+void delete_old_vars()
+{
+  namespace fs = std::filesystem;
+
+  fs::path        old_vars = fs::path(File::MakePath(File::Vars())).parent_path() / FILE_DEF_VARS_OLD;
+  std::error_code ignore;
+  fs::remove(old_vars, ignore);
 }
 
 void Config::Load()
 {
-  spdlog::info("=-=-=-==-=-=-=-=-=-=-=-=-=-=");
-  spdlog::info("Loading Config :: {}", File::Config());
-  spdlog::info("=-=-=-==-=-=-=-=-=-=-=-=-=-=");
+  auto filename = File::Config();
+
+  migrate_mac_config_if_needed(filename);
+  delete_old_vars();
 
   toml::table config;
   toml::table parsed;
   bool        write_config = false;
   try {
-    config       = std::move(toml::parse_file(File::MakePath(File::Config())));
+    config       = std::move(toml::parse_file(File::MakePath(filename)));
     write_config = true;
   } catch (const toml::parse_error& e) {
     spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
+    spdlog::debug("");
     write_config = false;
   } catch (...) {
-    spdlog::info("Failed to load config file, falling back to default settings");
+    spdlog::warn("Failed to load config file, falling back to default settings");
+    spdlog::debug("");
     write_config = false;
   }
 
+#if _MODDBG
+  this->installUiScaleHooks     = get_config_or_default(config, parsed, "patches", "uiscalehooks", true);
+  this->installZoomHooks        = get_config_or_default(config, parsed, "patches", "zoomhooks", true);
+  this->installBuffFixHooks     = get_config_or_default(config, parsed, "patches", "bufffixhooks", true);
+  this->installToastBannerHooks = get_config_or_default(config, parsed, "patches", "toastbannerhooks", true);
+  this->installPanHooks         = get_config_or_default(config, parsed, "patches", "panhooks", true);
+  this->installImproveResponsivenessHooks =
+      get_config_or_default(config, parsed, "patches", "improveresponsivenesshooks", true);
+  this->installHotkeyHooks       = get_config_or_default(config, parsed, "patches", "hotkeyhooks", true);
+  this->installFreeResizeHooks   = get_config_or_default(config, parsed, "patches", "freeresizehooks", true);
+  this->installTempCrashFixes    = get_config_or_default(config, parsed, "patches", "tempcrashfixes", true);
+  this->installTestPatches       = get_config_or_default(config, parsed, "patches", "testpatches", true);
+  this->installMiscPatches       = get_config_or_default(config, parsed, "patches", "miscpatches", true);
+  this->installChatPatches       = get_config_or_default(config, parsed, "patches", "chatpatches", true);
+  this->installResolutionListFix = get_config_or_default(config, parsed, "patches", "resolutionlistfix", true);
+  this->installSyncPatches       = get_config_or_default(config, parsed, "patches", "syncpatches", true);
+  this->installObjectTracker     = get_config_or_default(config, parsed, "patches", "objecttracker", true);
+  spdlog::debug("");
+#else
+  this->installUiScaleHooks               = true;
+  this->installZoomHooks                  = true;
+  this->installBuffFixHooks               = true;
+  this->installToastBannerHooks           = true;
+  this->installPanHooks                   = true;
+  this->installImproveResponsivenessHooks = true;
+  this->installHotkeyHooks                = true;
+  this->installFreeResizeHooks            = true;
+  this->installTempCrashFixes             = true;
+  this->installTestPatches                = true;
+  this->installMiscPatches                = true;
+  this->installChatPatches                = true;
+  this->installResolutionListFix          = true;
+  this->installSyncPatches                = true;
+  this->installObjectTracker              = true;
+#endif
+
+  this->queue_enabled       = get_config_or_default(config, parsed, "control", "queue_enabled", true);
   this->hotkeys_enabled     = get_config_or_default(config, parsed, "control", "hotkeys_enabled", true);
   this->hotkeys_extended    = get_config_or_default(config, parsed, "control", "hotkeys_extended", true);
   this->use_scopely_hotkeys = get_config_or_default(config, parsed, "control", "use_scopely_hotkeys", false);
-#if DEBUG
+  this->select_timer        = get_config_or_default(config, parsed, "control", "select_timer", 500);
   this->enable_experimental = get_config_or_default(config, parsed, "control", "enable_experimental", false);
-#else
-  this->enable_experimental = false;
-#endif
+
+  spdlog::debug("");
 
   this->ui_scale            = get_config_or_default(config, parsed, "graphics", "ui_scale", 0.9f);
   this->ui_scale_adjust     = get_config_or_default(config, parsed, "graphics", "ui_scale_adjust", 0.05f);
@@ -361,15 +457,17 @@ void Config::Load()
     this->system_pan_momentum = get_config_or_default(config, parsed, "graphics", "system_pan_momentum", 0.2f);
   }
 
+  spdlog::debug("");
+
   this->system_pan_momentum_falloff =
       get_config_or_default(config, parsed, "graphics", "system_pan_momentum_falloff", 0.8f);
   this->borderless_fullscreen_f11 =
       get_config_or_default(config, parsed, "graphics", "borderless_fullscreen_f11", true);
-  this->target_framerate     = get_config_or_default(config, parsed, "graphics", "target_framerate", 60);
-  this->vsync                = get_config_or_default(config, parsed, "graphics", "vsync", 1);
   this->transition_time      = get_config_or_default(config, parsed, "graphics", "transition_time", 0.01f);
   this->show_all_resolutions = get_config_or_default(config, parsed, "graphics", "show_all_resolutions", false);
   this->default_system_zoom  = get_config_or_default(config, parsed, "graphics", "default_system_zoom", 0.0f);
+
+  spdlog::debug("");
 
   this->system_zoom_preset_1   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_1", 0.0f);
   this->system_zoom_preset_2   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_2", 0.0f);
@@ -378,7 +476,11 @@ void Config::Load()
   this->system_zoom_preset_5   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_5", 0.0f);
   this->use_presets_as_default = get_config_or_default(config, parsed, "graphics", "use_presets_as_default", false);
 
+  spdlog::debug("");
+
   this->use_out_of_dock_power = get_config_or_default(config, parsed, "buffs", "use_out_of_dock_power", false);
+
+  spdlog::debug("");
 
   this->disable_escape_exit    = get_config_or_default(config, parsed, "ui", "disable_escape_exit", false);
   this->disable_preview_locate = get_config_or_default(config, parsed, "ui", "disable_preview_locate", false);
@@ -396,10 +498,17 @@ void Config::Load()
   this->show_armada_cargo      = get_config_or_default(config, parsed, "ui", "show_armada_cargo", true);
 
   this->always_skip_reveal_sequence = get_config_or_default(config, parsed, "ui", "always_skip_reveal_sequence", false);
-  this->fix_unity_web_requests      = get_config_or_default(config, parsed, "tech", "fix_unity_web_requests", true);
 
-  this->sync_proxy      = get_config_or_default<std::string>(config, parsed, "sync", "proxy", "");
-  this->sync_file       = get_config_or_default<std::string>(config, parsed, "sync", "file", "");
+  // must explicitly include std::string typing here, or we get back char * which fails us!
+  std::string disabled_banner_types_str =
+      get_config_or_default<std::string>(config, parsed, "ui", "disabled_banner_types", "");
+
+  spdlog::debug("");
+
+  this->sync_proxy = get_config_or_default<std::string>(config, parsed, "sync", "proxy", "");
+  this->sync_file  = get_config_or_default<std::string>(config, parsed, "sync", "file", "");
+
+  this->sync_debug      = get_config_or_default(config, parsed, "sync", "debug", false);
   this->sync_logging    = get_config_or_default(config, parsed, "sync", "logging", false);
   this->sync_battlelogs = get_config_or_default(config, parsed, "sync", "battlelogs", false);
   this->sync_resources  = get_config_or_default(config, parsed, "sync", "resources", false);
@@ -410,6 +519,8 @@ void Config::Load()
   this->sync_traits     = get_config_or_default(config, parsed, "sync", "traits", false);
   this->sync_buildings  = get_config_or_default(config, parsed, "sync", "buildings", false);
   this->sync_ships      = get_config_or_default(config, parsed, "sync", "ships", false);
+
+  spdlog::debug("");
 
   parsed["sync"].as_table()->emplace<toml::table>("targets", toml::table());
 
@@ -436,9 +547,7 @@ void Config::Load()
     }
   }
 
-  // must explicitly include std::string typing here, or we get back char * which fails us!
-  std::string disabled_banner_types_str =
-      get_config_or_default<std::string>(config, parsed, "ui", "disabled_banner_types", "");
+  spdlog::debug("");
 
   this->config_settings_url = get_config_or_default<std::string>(config, parsed, "config", "settings_url", "");
   this->config_assets_url_override =
@@ -446,11 +555,13 @@ void Config::Load()
 
   std::vector<std::string> types = StrSplit(disabled_banner_types_str, ',');
 
+  spdlog::debug("");
+
   std::string       bannerString = "";
   std::stringstream message;
   message << "Parsing banner strings";
 
-  spdlog::info(message.str());
+  spdlog::debug(message.str());
 
   for (const auto& [key, value] : bannerTypes) {
     auto upper_key = AsciiStrToUpper(key);
@@ -471,9 +582,11 @@ void Config::Load()
 
   message.str("");
   message << "Final disabledbanner types: " << bannerString;
-  spdlog::info(message.str());
+  spdlog::debug(message.str());
 
   parsed["ui"].as_table()->insert_or_assign("disabled_banner_types", bannerString);
+
+  spdlog::debug("");
 
   if (this->enable_experimental) {
     parse_config_shortcut(config, parsed, "move_left", GameFunction::MoveLeft, "LEFT|A");
@@ -482,8 +595,9 @@ void Config::Load()
     parse_config_shortcut(config, parsed, "move_up", GameFunction::MoveUp, "UP|W");
   }
 
-  parse_config_shortcut(config, parsed, "hotkeys_disble", GameFunction::DisableHotKeys, "CTRL-ALT-MINUS");
-  parse_config_shortcut(config, parsed, "hotkeys_enable", GameFunction::EnableHotKeys, "CTRL-ALT-=");
+  parse_config_shortcut(config, parsed, "action_hotkeys_disble", GameFunction::DisableHotKeys, "CTRL-ALT-MINUS");
+  parse_config_shortcut(config, parsed, "action_hotkeys_enable", GameFunction::EnableHotKeys, "CTRL-ALT-=");
+
   parse_config_shortcut(config, parsed, "select_chatalliance", GameFunction::SelectChatAlliance, "CTRL-2");
   parse_config_shortcut(config, parsed, "select_chatglobal", GameFunction::SelectChatGlobal, "CTRL-1");
   parse_config_shortcut(config, parsed, "select_chatprivate", GameFunction::SelectChatPrivate, "CTRL-3");
@@ -499,9 +613,10 @@ void Config::Load()
   parse_config_shortcut(config, parsed, "select_ship8", GameFunction::SelectShip8, "8");
   parse_config_shortcut(config, parsed, "select_current", GameFunction::SelectCurrent, "CTRL-SPACE");
 
-  parse_config_shortcut(config, parsed, "action_primary", GameFunction::ActionPrimary, "SPACE");
+  parse_config_shortcut(config, parsed, "action_primary", GameFunction::ActionPrimary, "SPACE|MOUSE1");
   parse_config_shortcut(config, parsed, "action_secondary", GameFunction::ActionSecondary, "R");
-  parse_config_shortcut(config, parsed, "action_queue", GameFunction::ActionQueue, "V");
+  parse_config_shortcut(config, parsed, "action_queue", GameFunction::ActionQueue, "SPACE|MOUSE1");
+  parse_config_shortcut(config, parsed, "action_queue_clear", GameFunction::ActionQueueClear, "CTRL-C");
   parse_config_shortcut(config, parsed, "action_view", GameFunction::ActionView, "V");
   parse_config_shortcut(config, parsed, "action_recall", GameFunction::ActionRecall, "R");
   parse_config_shortcut(config, parsed, "action_recall_cancel", GameFunction::ActionRecallCancel, "SPACE");
@@ -528,10 +643,29 @@ void Config::Load()
   parse_config_shortcut(config, parsed, "log_debug", GameFunction::LogLevelDebug, "F9");
   parse_config_shortcut(config, parsed, "log_trace", GameFunction::LogLevelTrace, "SHIFT-F9");
   parse_config_shortcut(config, parsed, "log_info", GameFunction::LogLevelInfo, "F11");
+  parse_config_shortcut(config, parsed, "show_awayteam", GameFunction::ShowAwayTeam, "SHIFT-T");
+  parse_config_shortcut(config, parsed, "show_gifts", GameFunction::ShowGifts, "/");
+
+  parse_config_shortcut(config, parsed, "show_artifacts", GameFunction::ShowArtifacts, "SHIFT-I");
+  parse_config_shortcut(config, parsed, "show_commander", GameFunction::ShowCommander, "O");
+  parse_config_shortcut(config, parsed, "show_daily", GameFunction::ShowDaily, "Z");
+  parse_config_shortcut(config, parsed, "show_events", GameFunction::ShowEvents, "T");
+  parse_config_shortcut(config, parsed, "show_exocomp", GameFunction::ShowExoComp, "X");
+  parse_config_shortcut(config, parsed, "show_factions", GameFunction::ShowFactions, "F");
+  parse_config_shortcut(config, parsed, "show_inventory", GameFunction::ShowInventory, "I");
+  parse_config_shortcut(config, parsed, "show_missions", GameFunction::ShowMissions, "M");
+  parse_config_shortcut(config, parsed, "show_research", GameFunction::ShowResearch, "U");
+  parse_config_shortcut(config, parsed, "show_scrapyard", GameFunction::ShowScrapYard, "Y");
+  parse_config_shortcut(config, parsed, "show_officers", GameFunction::ShowOfficers, "SHIFT-O");
+  parse_config_shortcut(config, parsed, "show_qtrials", GameFunction::ShowQTrials, "SHIFT-Q");
+  parse_config_shortcut(config, parsed, "show_refinery", GameFunction::ShowRefinery, "SHIFT-F");
+  parse_config_shortcut(config, parsed, "show_ships", GameFunction::ShowShips, "N");
+  parse_config_shortcut(config, parsed, "show_stationexterior", GameFunction::ShoWStationExterior, "SHIFT-G");
+  parse_config_shortcut(config, parsed, "show_stationinterior", GameFunction::ShowStationInterior, "SHIFT-H");
+
+  parse_config_shortcut(config, parsed, "toggle_queue", GameFunction::ToggleQueue, "CTRL-Q");
 
   if (this->hotkeys_extended) {
-    parse_config_shortcut(config, parsed, "show_awayteam", GameFunction::ShowAwayTeam, "SHIFT-T");
-    parse_config_shortcut(config, parsed, "show_gifts", GameFunction::ShowGifts, "/");
     parse_config_shortcut(config, parsed, "show_alliance", GameFunction::ShowAlliance, "\\");
 
     if (this->enable_experimental) {
@@ -545,21 +679,6 @@ void Config::Load()
       parse_config_shortcut(config, parsed, "show_lookup", GameFunction::ShowLookup, "L");
     }
 
-    parse_config_shortcut(config, parsed, "show_artifacts", GameFunction::ShowArtifacts, "SHIFT-I");
-    parse_config_shortcut(config, parsed, "show_commander", GameFunction::ShowCommander, "O");
-    parse_config_shortcut(config, parsed, "show_daily", GameFunction::ShowDaily, "Z");
-    parse_config_shortcut(config, parsed, "show_events", GameFunction::ShowEvents, "T");
-    parse_config_shortcut(config, parsed, "show_exocomp", GameFunction::ShowExoComp, "X");
-    parse_config_shortcut(config, parsed, "show_factions", GameFunction::ShowFactions, "F");
-    parse_config_shortcut(config, parsed, "show_inventory", GameFunction::ShowInventory, "I");
-    parse_config_shortcut(config, parsed, "show_missions", GameFunction::ShowMissions, "M");
-    parse_config_shortcut(config, parsed, "show_research", GameFunction::ShowResearch, "U");
-    parse_config_shortcut(config, parsed, "show_officers", GameFunction::ShowOfficers, "SHIFT-O");
-    parse_config_shortcut(config, parsed, "show_qtrials", GameFunction::ShowQTrials, "SHIFT-Q");
-    parse_config_shortcut(config, parsed, "show_refinery", GameFunction::ShowRefinery, "SHIFT-F");
-    parse_config_shortcut(config, parsed, "show_ships", GameFunction::ShowShips, "N");
-    parse_config_shortcut(config, parsed, "show_stationexterior", GameFunction::ShoWStationExterior, "SHIFT-G");
-    parse_config_shortcut(config, parsed, "show_stationinterior", GameFunction::ShowStationInterior, "SHIFT-H");
     parse_config_shortcut(config, parsed, "set_zoom_preset1", GameFunction::SetZoomPreset1, "SHIFT-F1");
     parse_config_shortcut(config, parsed, "set_zoom_preset2", GameFunction::SetZoomPreset2, "SHIFT-F2");
     parse_config_shortcut(config, parsed, "set_zoom_preset3", GameFunction::SetZoomPreset3, "SHIFT-F3");
@@ -567,7 +686,7 @@ void Config::Load()
     parse_config_shortcut(config, parsed, "set_zoom_preset5", GameFunction::SetZoomPreset5, "SHIFT-F5");
     parse_config_shortcut(config, parsed, "set_zoom_default", GameFunction::SetZoomDefault, "CTRL-=");
     parse_config_shortcut(config, parsed, "toggle_preview_locate", GameFunction::TogglePreviewLocate, "CTRL-L");
-    parse_config_shortcut(config, parsed, "toggle_preview_locate", GameFunction::TogglePreviewRecall, "CTRL-R");
+    parse_config_shortcut(config, parsed, "toggle_preview_recall", GameFunction::TogglePreviewRecall, "CTRL-R");
     parse_config_shortcut(config, parsed, "toggle_cargo_default", GameFunction::ToggleCargoDefault, "ALT-1");
     parse_config_shortcut(config, parsed, "toggle_cargo_player", GameFunction::ToggleCargoPlayer, "ALT-2");
     parse_config_shortcut(config, parsed, "toggle_cargo_station", GameFunction::ToggleCargoStation, "ALT-3");
@@ -575,12 +694,14 @@ void Config::Load()
     parse_config_shortcut(config, parsed, "toggle_cargo_armada", GameFunction::ToggleCargoArmada, "ALT-5");
   }
 
+  spdlog::debug("");
+
   if (!std::filesystem::exists(File::MakePath(File::Config()))) {
     message.str("");
     message << "Creating " << File::Config() << " (default config file)";
     spdlog::warn(message.str());
 
-    Config::Save(config, File::Config(), false);
+    Config::Save(parsed, File::Config(), false);
   }
 
   message.str("");
@@ -588,24 +709,30 @@ void Config::Load()
   spdlog::info(message.str());
 
   if (std::filesystem::exists(FILE_DEF_PARSED)) {
+    message.str("");
     message << "Removing " << FILE_DEF_PARSED << " (old parsed file)";
+    spdlog::info(message.str());
+
     std::filesystem::remove(FILE_DEF_PARSED);
   }
 
+  
   Config::Save(parsed, File::Vars());
 
-  std::cout
-      << message.str() << ":\n-----------------------------\n\n"
-      << parsed << "\n\n-----------------------------\nVersion "
+  std::cout << "\n\n-----------------------------\n\n"
+            << parsed << "\n\n-----------------------------\nVersion "
 
 #if VERSION_PATCH
-      << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << " (Patch "
-      << VERSION_PATCH << ")\n\n"
-      << "NOTE: Beta versions may have unexpected bugs and issues.\n\n"
+            << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << " (Patch "
+            << VERSION_PATCH << ")\n\n"
+            << "NOTE: Beta versions may have unexpected bugs and issues.\n\n"
 #else
-      << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << " (Release)"
+            << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
+            << " (Release)"
 #endif
 
-      << "\n\nPlease see https://github.com/netniv/bob for latest configuration help, examples and future releases\n"
-      << "or visit the STFC Community Mod discord server at https://discord.gg/PrpHgs7Vjs\n\n";
+            << "\n\nPlease see https://github.com/netniv/stfc-mod for latest configuration help, examples and future "
+               "releases\n"
+            << "or visit the STFC Community Mod discord server at https://discord.gg/PrpHgs7Vjs\n\n";
+
 }

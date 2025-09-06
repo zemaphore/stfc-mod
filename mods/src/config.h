@@ -41,7 +41,9 @@ public:
   float system_pan_momentum_falloff;
 
   float keyboard_zoom_speed;
+  int   select_timer;
 
+  bool  queue_enabled;
   bool  hotkeys_enabled;
   bool  hotkeys_extended;
   bool  use_scopely_hotkeys;
@@ -54,10 +56,7 @@ public:
   float system_zoom_preset_3;
   float system_zoom_preset_4;
   float system_zoom_preset_5;
-
-  int32_t target_framerate;
-  int32_t vsync;
-  float   transition_time;
+  float transition_time;
 
   bool             borderless_fullscreen_f11;
   std::vector<int> disabled_banner_types;
@@ -71,7 +70,6 @@ public:
   bool disable_galaxy_chat;
   bool disable_first_popup;
   bool disable_toast_banners;
-  bool fix_unity_web_requests;
 
   bool show_cargo_default;
   bool show_player_cargo;
@@ -86,6 +84,7 @@ public:
   std::string sync_proxy;
   std::string sync_file;
 
+  bool sync_debug;
   bool sync_logging;
   bool sync_resources;
   bool sync_battlelogs;
@@ -97,6 +96,22 @@ public:
   bool sync_buildings;
   bool sync_ships;
 
+  bool installUiScaleHooks;
+  bool installZoomHooks;
+  bool installBuffFixHooks;
+  bool installToastBannerHooks;
+  bool installPanHooks;
+  bool installImproveResponsivenessHooks;
+  bool installHotkeyHooks;
+  bool installFreeResizeHooks;
+  bool installTempCrashFixes;
+  bool installTestPatches;
+  bool installMiscPatches;
+  bool installChatPatches;
+  bool installResolutionListFix;
+  bool installSyncPatches;
+  bool installObjectTracker;
+  
   std::string config_settings_url;
   std::string config_assets_url_override;
 };

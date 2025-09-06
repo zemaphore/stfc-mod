@@ -10,6 +10,19 @@ struct ActionQueueManager : MonoSingleton<ActionQueueManager> {
   friend struct MonoSingleton<ActionQueueManager>;
 
 public:
+  void ClearQueue(FleetPlayerData* playerData)
+  {
+    static auto ClearQueueMethod =
+        get_class_helper().GetMethod<void(ActionQueueManager*, FleetPlayerData*)>("ClearQueue");
+    static auto CLearQueueWarn = true;
+
+    if (ClearQueueMethod) {
+      ClearQueueMethod(this, playerData);
+    } else if (CLearQueueWarn) {
+      CLearQueueWarn = false;
+      ErrorMsg::MissingMethod("ActionQueueManager", "ClearQueue");
+    }
+  }
   bool IsQueueFull(FleetPlayerData* playerData)
   {
     static auto IsQueueFullMethod =
@@ -60,9 +73,7 @@ public:
   {
     if (IsQueueUnlocked()) {
       if (!IsQueueFull(playerData)) {
-        if (!IsFleetInQueue(playerData)) {
-          return true;
-        }
+        return true;
       }
     }
 
@@ -88,7 +99,7 @@ private:
   {
     static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Prime.ActionQueue", "ActionQueueManager");
     static auto class_warn   = true;
-    if (!class_helper.HasClass()) {
+    if (!class_helper.isValidHelper()) {
       if (class_warn) {
         class_warn = false;
         ErrorMsg::MissingHelper("ActionQueue", "ActionQueueManager");

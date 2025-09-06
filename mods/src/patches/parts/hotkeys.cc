@@ -80,6 +80,10 @@ bool MoveOfficerCanvas(bool goLeft)
 
 void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 {
+  // This function is called every frame to update the screen manager.
+  // Create a global clock to detect time elapsed
+  static std::chrono::time_point<std::chrono::steady_clock> select_clock = std::chrono::steady_clock::now();
+
   Key::ResetCache();
 
   if (MapKey::IsDown(GameFunction::DisableHotKeys)) {
@@ -198,15 +202,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
     // }
   }
 
-  if (MapKey::IsDown(GameFunction::SelectCurrent)) {
-    auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
-    if (fleet_bar) {
-      auto fleet = fleet_bar->_fleetPanelController->fleet;
-      if (fleet) {
-        if (NavigationSectionManager::Instance() && NavigationSectionManager::Instance()->SNavigationManager) {
-          NavigationSectionManager::Instance()->SNavigationManager->HideInteraction();
-        }
-        FleetsManager::Instance()->RequestViewFleet(fleet, true);
+        select_clock = select_now;
         return;
       }
     }
@@ -221,6 +217,25 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
   if (!is_in_chat) {
     if (!Key::IsInputFocused()) {
+      if (MapKey::IsDown(GameFunction::SelectCurrent)) {
+        auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+        if (fleet_bar) {
+          auto fleet = fleet_bar->_fleetPanelController->fleet;
+          if (fleet) {
+            if (NavigationSectionManager::Instance() && NavigationSectionManager::Instance()->SNavigationManager) {
+              NavigationSectionManager::Instance()->SNavigationManager->HideInteraction();
+            }
+            FleetsManager::Instance()->RequestViewFleet(fleet, true);
+            return;
+          }
+        }
+      }
+
+      if ((MapKey::IsDown(GameFunction::ToggleQueue))) {
+        config->queue_enabled = !config->queue_enabled;
+        return;
+      }
+
       if ((MapKey::IsDown(GameFunction::ShowChat) || MapKey::IsDown(GameFunction::ShowChatSide1)
            || MapKey::IsDown(GameFunction::ShowChatSide2))) {
         if (auto chat_manager = ChatManager::Instance(); chat_manager) {
@@ -237,6 +252,20 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
           } else {
             chat_manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Fullscreen);
           }
+        }
+      }
+
+      if (MapKey::IsDown(GameFunction::MoveLeft)) {
+        auto const result = MoveOfficerCanvas(true);
+        if (result) {
+          return;
+        }
+      }
+
+      if (MapKey::IsDown(GameFunction::MoveRight)) {
+        auto const result = MoveOfficerCanvas(false);
+        if (result) {
+          return;
         }
       }
 
@@ -270,6 +299,8 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         return GotoSection(SectionID::Missions_AcceptedList);
       } else if (MapKey::IsDown(GameFunction::ShowResearch)) {
         return GotoSection(SectionID::Research_LandingPage);
+      } else if (MapKey::IsDown(GameFunction::ShowScrapYard)) {
+        return GotoSection(SectionID::ShipScrapping_List);
       } else if (MapKey::IsDown(GameFunction::ShowOfficers)) {
         return GotoSection(SectionID::OfficerInventory);
       } else if (MapKey::IsDown(GameFunction::ShowCommander)) {
@@ -345,14 +376,6 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         return chat_manager->OpenChannel(ChatChannelCategory::Private);
       }
     }
-
-    if (MapKey::IsDown(GameFunction::ActionView)) {
-      if (auto view_controller = ObjectFinder<FullScreenChatViewController>::Get(); view_controller) {
-        if (view_controller->_messageList && view_controller->_messageList->_inputField) {
-          return view_controller->_messageList->_inputField->ActivateInputField();
-        }
-      }
-    }
   }
 
   if (!Key::IsInputFocused()) {
@@ -372,7 +395,8 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
     if (MapKey::IsDown(GameFunction::ActionPrimary) || MapKey::IsDown(GameFunction::ActionSecondary)
         || MapKey::IsDown(GameFunction::ActionRecall) || MapKey::IsDown(GameFunction::ActionRepair)
-        || MapKey::IsDown(GameFunction::ActionQueue) || force_space_action_next_frame) {
+        || MapKey::IsDown(GameFunction::ActionQueue) || MapKey::IsDown(GameFunction::ActionQueueClear)
+        || force_space_action_next_frame) {
       if (Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat() && !Key::IsInputFocused()) {
         auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
         if (fleet_bar) {
@@ -437,7 +461,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 template <typename T> inline bool CanHideViewersOfType()
 {
   for (auto widget : ObjectFinder<T>::GetAll()) {
-    const auto visible = widget
+    const auto visible = widget && widget->_visibilityController != NULL
                          && (widget->_visibilityController->_state == VisibilityState::Visible
                              || widget->_visibilityController->_state == VisibilityState::Show);
     if (visible) {
@@ -577,21 +601,16 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
   auto has_repair        = MapKey::IsDown(GameFunction::ActionRepair);
   auto has_recall_cancel = MapKey::IsDown(GameFunction::ActionRecallCancel);
   auto has_secondary     = MapKey::IsDown(GameFunction::ActionSecondary);
-  auto has_queue         = MapKey::IsDown(GameFunction::ActionQueue) && action_queue->CanAddToQueue(fleet);
+  auto has_queue         = MapKey::IsDown(GameFunction::ActionQueue);
+  auto has_queue_clear   = MapKey::IsDown(GameFunction::ActionQueueClear);
   auto has_recall =
       MapKey::IsDown(GameFunction::ActionRecall) && (!Config::Get().disable_preview_recall || !CanHideViewers());
 
-  if (has_recall_cancel
-      && (fleet->CurrentState == FleetState::WarpCharging || fleet->CurrentState == FleetState::Warping)) {
-    fleet_controller->CancelWarpClicked();
-  } else if (has_queue) {
-    auto fleets_manager = FleetsManager::Instance();
-    if (fleets_manager != nullptr) {
-      auto target = fleets_manager->targetFleetData;
-      if (target != nullptr) {
-        action_queue->AddToQueue(target->ID);
-      }
-    }
+  if (has_queue_clear) {
+    action_queue->ClearQueue(fleet);
+  } else if (has_recall_cancel
+             && (fleet->CurrentState == FleetState::WarpCharging || fleet->CurrentState == FleetState::Warping)) {
+    fleet_controller->CancelButtonClicked();
   } else {
     auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
     for (auto pre_scan_widget : all_pre_scan_widgets) {
@@ -608,29 +627,86 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
           } else if (has_primary) {
             return mine_object_viewer_widget->MineClicked();
           }
-        } else {
-          if (has_queue) {
+        }
 
-          } else if (has_secondary) {
-            return pre_scan_widget->_scanEngageButtonsWidget->OnScanButtonClicked();
-          } else if (has_primary) {
-            auto armada_object_viewer_widget = ObjectFinder<ArmadaObjectViewerWidget>::Get();
-            if (!armada_object_viewer_widget
-                || (armada_object_viewer_widget->_visibilityController->_state != VisibilityState::Visible
-                    && armada_object_viewer_widget->_visibilityController->_state != VisibilityState::Show)) {
-              auto context = pre_scan_widget->_scanEngageButtonsWidget->Context;
-              auto type    = GetHullTypeFromBattleTarget(context);
+        if (has_queue && action_queue->IsQueueUnlocked() && pre_scan_widget->_addToQueueButtonWidget
+            && pre_scan_widget->_scanEngageButtonsWidget) {
+          auto context = pre_scan_widget->_scanEngageButtonsWidget->Context;
+          auto type    = GetHullTypeFromBattleTarget(context);
 
-              // Try once more in X frames if we get ANY
-              // in-case of failed to navgitate error?
-              if (type != HullType::ArmadaTarget && (type != HullType::Any || force_space_action_next_frame)) {
-                pre_scan_widget->_scanEngageButtonsWidget->OnEngageButtonClicked();
-              } else if (type == HullType::Any) {
-                force_space_action_next_frame = true;
+          if (type != HullType::ArmadaTarget && (type != HullType::Any || force_space_action_next_frame)) {
+            if (pre_scan_widget->_addToQueueButtonWidget->isActiveAndEnabled) {
+              auto listener = pre_scan_widget->_addToQueueButtonWidget->SemaphoreListener;
+              if (listener && !action_queue->IsQueueFull(fleet)) {
+                auto button = listener->TheButton;
+                if (button) {
+                  button->Press();
+                  DidHideViewers();
+                }
               }
-
               return;
             }
+
+            if (type == HullType::Any) {
+              force_space_action_next_frame = true;
+              return;
+            }
+          }
+        }
+
+        if (has_secondary) {
+          return pre_scan_widget->_scanEngageButtonsWidget->OnScanButtonClicked();
+        }
+
+        if (has_primary && pre_scan_widget->_scanEngageButtonsWidget
+            && pre_scan_widget->_scanEngageButtonsWidget->enabled) {
+          auto context = pre_scan_widget->_scanEngageButtonsWidget->Context;
+          auto type    = GetHullTypeFromBattleTarget(context);
+
+          // Try once more in X frames if we get ANY
+          // in-case of failed to navgitate error?
+          auto armada_widget = ObjectFinder<ArmadaObjectViewerWidget>::Get();
+          auto armada_state  = VisibilityState::Unknown;
+
+          if (armada_widget) {
+            if (armada_widget->_visibilityController) {
+              armada_state = armada_widget->_visibilityController->State;
+            } else {
+              spdlog::warn("ArmadaWidget has no visibility controller, using default Visible state");
+              armada_state = VisibilityState::Visible;
+            }
+          }
+
+          auto canActionPrimary = type != HullType::Any;
+          if (type == HullType::ArmadaTarget
+              && (armada_state == VisibilityState::Visible || armada_state == VisibilityState::Show)) {
+            canActionPrimary = false;
+          } else if (force_space_action_next_frame) {
+            canActionPrimary = true;
+          }
+
+          // Try once more in X frames if we get ANY
+          // in-case of failed to navgitate error?
+          if (canActionPrimary) {
+            if (type == HullType::ArmadaTarget) {
+              if (pre_scan_widget->_armadaAttackButton && pre_scan_widget->_armadaAttackButton->isActiveAndEnabled) {
+                auto listener = pre_scan_widget->_armadaAttackButton->SemaphoreListener;
+                if (listener) {
+                  auto button = listener->TheButton;
+                  if (button) {
+                    button->Press();
+                  }
+                }
+                return;
+              }
+              pre_scan_widget->_scanEngageButtonsWidget->OnArmadaButtonClicked();
+            } else {
+              pre_scan_widget->_scanEngageButtonsWidget->OnEngageButtonClicked();
+            }
+            return;
+          } else if (type == HullType::Any) {
+            force_space_action_next_frame = true;
+            return;
           }
         }
       }
@@ -656,16 +732,28 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
       }
     } else if (auto navigation_ui_controller = ObjectFinder<NavigationInteractionUIViewController>::Get();
                navigation_ui_controller && has_primary) {
-      if (auto armada_object_viewer_widget = ObjectFinder<ArmadaObjectViewerWidget>::Get();
-          armada_object_viewer_widget
-          && (armada_object_viewer_widget->_visibilityController->_state == VisibilityState::Visible
-              || armada_object_viewer_widget->_visibilityController->_state == VisibilityState::Show)) {
-        auto button = armada_object_viewer_widget->__get__joinContext();
+      auto armada_widget = ObjectFinder<ArmadaObjectViewerWidget>::Get();
+      auto armada_state  = VisibilityState::Unknown;
+
+      if (armada_widget) {
+        if (armada_widget->_visibilityController) {
+          armada_state = armada_widget->_visibilityController->State;
+        } else {
+          spdlog::warn("ArmadaWidget has no visibility controller, using default Visible state");
+          armada_state = VisibilityState::Visible;
+        }
+      }
+
+      spdlog::info("have armada? {}, State {}", (armada_widget ? "Yes" : "No"), (int)armada_state);
+      if (armada_widget && (armada_state == VisibilityState::Visible || armada_state == VisibilityState::Show)) {
+        auto button = armada_widget->__get__joinContext();
         if (button && button->Interactable) {
-          armada_object_viewer_widget->ValidateThenJoinArmada();
+          armada_widget->ValidateThenJoinArmada();
+          return;
         }
       } else {
         navigation_ui_controller->OnSetCourseButtonClick();
+        return;
       }
     } else if (has_recall && DidExecuteRecall(fleet_bar)) {
       return;
@@ -766,7 +854,7 @@ void InstallHotkeyHooks()
 {
   auto shortcuts_manager_helper =
       il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager");
-  if (!shortcuts_manager_helper.HasClass()) {
+  if (!shortcuts_manager_helper.isValidHelper()) {
     ErrorMsg::MissingHelper("GameInput", "ShortcutsManager");
   } else {
     auto ptr_can_user_shortcuts = shortcuts_manager_helper.GetMethod("InitializeActions");
@@ -778,7 +866,7 @@ void InstallHotkeyHooks()
   }
 
   auto screen_manager_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "ScreenManager");
-  if (!screen_manager_helper.HasClass()) {
+  if (!screen_manager_helper.isValidHelper()) {
     ErrorMsg::MissingHelper("UI", "ScreenManager");
   } else {
     auto ptr_update = screen_manager_helper.GetMethod("Update");
@@ -791,7 +879,7 @@ void InstallHotkeyHooks()
 
   static auto rewards_button_widget =
       il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget");
-  if (!rewards_button_widget.HasClass()) {
+  if (!rewards_button_widget.isValidHelper()) {
     ErrorMsg::MissingHelper("Combat", "RewardsButtonWidget");
   } else {
     auto on_did_bind_context_ptr = rewards_button_widget.GetMethod("OnDidBindContext");
@@ -805,7 +893,7 @@ void InstallHotkeyHooks()
 
   static auto pre_scan_target_widget =
       il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget");
-  if (!pre_scan_target_widget.HasClass()) {
+  if (!pre_scan_target_widget.isValidHelper()) {
     ErrorMsg::MissingHelper("Combat", "PreScanTargetWidget");
   } else {
     auto show_with_fleet_ptr = pre_scan_target_widget.GetMethod("ShowWithFleet");
