@@ -30,11 +30,70 @@ enum class FleetState {
   CanLocate    = 1991
 };
     
+struct ProgressData {
+public:
+  __declspec(property(get = __get_CurrentValue)) double CurrentValue;
+  __declspec(property(get = __get_MinValue)) double MinValue;
+  __declspec(property(get = __get_MaxValue)) double MaxValue;
+
+private:
+  static IL2CppClassHelper& get_class_helper()
+  {
+    static auto class_helper =
+        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ProgressData");
+    return class_helper;
+  }
+
+public:
+  double __get_CurrentValue()
+  {
+    static auto field = get_class_helper().GetProperty("CurrentValue");
+    return *field.Get<double>(this);
+  }
+  double __get_MinValue()
+  {
+    static auto field = get_class_helper().GetProperty("MinValue");
+    return *field.Get<double>(this);
+  }
+  double __get_MaxValue()
+  {
+    static auto field = get_class_helper().GetProperty("MaxValue");
+    return *field.Get<double>(this);
+  }
+};
+
+struct CargoHoldData {
+public:
+  __declspec(property(get = __get_ProtectedCargoProgress)) ProgressData* ProtectedCargoProgress;
+  __declspec(property(get = __get_UnprotectedCargoProgress)) ProgressData* UnprotectedCargoProgress;
+
+private:
+  static IL2CppClassHelper& get_class_helper()
+  {
+    static auto class_helper =
+        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "CargoHoldData");
+    return class_helper;
+  }
+
+public:
+  ProgressData* __get_ProtectedCargoProgress()
+  {
+    static auto field = get_class_helper().GetProperty("ProtectedCargoProgress");
+    return field.GetRaw<ProgressData>(this);
+  }
+  ProgressData* __get_UnprotectedCargoProgress()
+  {
+    static auto field = get_class_helper().GetProperty("UnprotectedCargoProgress");
+    return field.GetRaw<ProgressData>(this);
+  }
+};
+
 struct FleetPlayerData {
 public:
   __declspec(property(get = __get_CurrentState)) FleetState CurrentState;
   __declspec(property(get = __get_PreviousState)) FleetState PreviousState;
   __declspec(property(get = __get_Id)) uint64_t Id;
+  __declspec(property(get = __get_CargoHoldData)) CargoHoldData* CCargoHoldData;
   __declspec(property(get = __get_Hull)) HullSpec* Hull;
   __declspec(property(get = __get_Address)) void* Address;
 
@@ -56,6 +115,12 @@ public:
   {
     static auto field = get_class_helper().GetProperty("Address");
     return field.GetRaw<void>(this);
+  }
+  // Backing field: the game exposes no property for the cargo hold.
+  CargoHoldData* __get_CargoHoldData()
+  {
+    static auto field = get_class_helper().GetField("_cargoHoldData").offset();
+    return *(CargoHoldData**)((uintptr_t)this + field);
   }
   FleetState __get_CurrentState()
   {

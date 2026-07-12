@@ -17,6 +17,8 @@ public:
   static void   AddMappedKey(GameFunction gameFunction, MapKey mappedKey);
   static bool   IsPressed(GameFunction gameFunction);
   static bool   IsDown(GameFunction gameFunction);
+  // Ignores modifier state, so a binding still matches while e.g. Shift is held.
+  static bool   IsDownUnsafe(GameFunction gameFunction);
   static bool   HasCorrectModifiers(MapKey mapKey);
 
   static std::string GetShortcuts(GameFunction gameFunction);
