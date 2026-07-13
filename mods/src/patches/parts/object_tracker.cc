@@ -23,7 +23,6 @@
 #include <EASTL/vector.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
-#include <spud/signature.h>
 
 #include <mutex>
 
@@ -68,27 +67,6 @@ void remove_from_tracking_recursive(Il2CppClass* klass, void* _this)
 #undef GET_CLASS
 }
 
-void (*GC_register_finalizer_inner)(unsigned __int64 obj, void (*fn)(void*, void*), void* cd,
-                                    void (**ofn)(void*, void*), void** ocd) = nullptr;
-
-void track_finalizer(void* _this, void*)
-{
-  if (_this == nullptr) {
-    return;
-  }
-
-  auto object = (Il2CppObject*)_this;
-  if (object->klass == nullptr) {
-    remove_from_tracking_all(_this);
-    return;
-  }
-
-#define GET_CLASS(obj) ((Il2CppClass*)(((size_t)obj) & ~(size_t)1))
-  spdlog::trace("Clearing {}({})", (void*)_this, GET_CLASS(object->klass)->name);
-  remove_from_tracking_all(_this);
-#undef GET_CLASS
-}
-
 void* track_ctor(auto original, void* _this)
 {
   auto obj = original(_this);
@@ -103,27 +81,14 @@ void* track_ctor(auto original, void* _this)
 
   std::scoped_lock lk{tracked_objects_mutex};
   spdlog::trace("Tracking {}({})", _this, cls->klass->name);
-  if (GC_register_finalizer_inner != nullptr) {
-    typedef void (*FinalizerCallback)(void* object, void* client_data);
-    FinalizerCallback oldCallback = nullptr;
-    void*             oldData     = nullptr;
-    GC_register_finalizer_inner((intptr_t)_this, track_finalizer, nullptr, &oldCallback, &oldData);
-    assert(!oldCallback);
-  }
+  // Object death is caught by the il2cpp liveness sweep (calc_liveness_hook). We do
+  // NOT register a Boehm GC finalizer (it runs during GC_finish_collection and would
+  // have to mutate tracked_objects without holding tracked_objects_mutex — locking
+  // there deadlocks against the stop-the-world collector — which races and corrupts
+  // the container), nor detour OnDestroy (a shared inherited base method that macOS
+  // will not tolerate being hooked).
   add_to_tracking_recursive(cls->klass, _this);
   return obj;
-}
-
-void track_destroy(auto original, Il2CppObject* _this, uint64_t a2, uint64_t a3)
-{
-#define GET_CLASS(obj) ((Il2CppClass*)(((size_t)obj) & ~(size_t)1))
-  if (_this != nullptr) {
-    std::scoped_lock lk{tracked_objects_mutex};
-    spdlog::trace("Clearing {}({})", (void*)_this, GET_CLASS(_this->klass)->name);
-    remove_from_tracking_all(_this);
-  }
-  return original(_this, a2, a3);
-#undef GET_CLASS
 }
 
 void track_free(auto original, void* _this)
@@ -168,22 +133,20 @@ void calc_liveness_hook(auto original, void* state)
 }
 
 static eastl::unordered_set<void*> seen_ctor;
-static eastl::unordered_set<void*> seen_destroy;
 
 template <typename T> void TrackObject()
 {
   auto& object_class = T::get_class_helper();
   auto  ctor         = object_class.GetMethod(".ctor");
-  auto  on_destroy   = object_class.GetMethod("OnDestroy");
   if (seen_ctor.find(ctor) == seen_ctor.end()) {
     SPUD_STATIC_DETOUR(ctor, track_ctor);
     seen_ctor.emplace(ctor);
   }
 
-  if (seen_destroy.find(on_destroy) == seen_destroy.end()) {
-    SPUD_STATIC_DETOUR(on_destroy, track_destroy);
-    seen_destroy.emplace(on_destroy);
-  }
+  // NOTE: OnDestroy is intentionally not detoured. Most tracked types do not declare
+  // their own OnDestroy; GetMethod resolves it to a shared inherited base method, and
+  // detouring that (repeatedly / with a fragile trampoline) crashes on macOS. Object
+  // death is instead caught by the il2cpp liveness sweep (calc_liveness_hook).
 }
 
 void InstallObjectTrackers()
@@ -207,25 +170,4 @@ void InstallObjectTrackers()
   TrackObject<StarNodeObjectViewerWidget>();
 
   SPUD_STATIC_DETOUR(il2cpp_unity_liveness_finalize, calc_liveness_hook);
-
-#if _WIN32
-  auto GC_register_finalizer_inner_matches =
-      spud::find_in_module("40 56 57 41 57 48 83 EC ? 83 3D", "GameAssembly.dll");
-#else
-#if SPUD_ARCH_ARM64
-  auto GC_register_finalizer_inner_matches = spud::find_in_module(
-    "FF ? 02 D1 FC 6F ? A9 FA 67 ? A9 F8 5F ? A9 F6 57 ? A9 F4 4F ? A9 FD 7B ? A9 FD ? 02 91 E4 0F ? A9", "GameAssembly.dylib");
-#else
-  auto GC_register_finalizer_inner_matches = spud::find_in_module(
-      "55 48 89 E5 41 57 41 56 41 55 41 54 53 48 83 EC ? 4C 89 45 ? 48 89 4D ? 83 3D", "GameAssembly.dylib");
-#endif
-#endif
-
-  if (GC_register_finalizer_inner_matches.size() == 0) {
-    spdlog::warn("Unable to resolve GC_register_finalizer_inner; object finalizers disabled");
-    return;
-  }
-
-  const auto GC_register_finalizer_inner_match = GC_register_finalizer_inner_matches.get(0);
-  GC_register_finalizer_inner = (decltype(GC_register_finalizer_inner))GC_register_finalizer_inner_match.address();
 }
