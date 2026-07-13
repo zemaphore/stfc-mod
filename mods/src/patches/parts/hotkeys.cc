@@ -29,6 +29,7 @@
 #include "prime/PreScanTargetWidget.h"
 #include "prime/ScanEngageButtonsWidget.h"
 #include "prime/ScreenManager.h"
+#include "prime/ShortcutsManager.h"
 
 #include "patches/key.h"
 #include "patches/mapkey.h"
@@ -305,7 +306,12 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       } else if (MapKey::IsDown(GameFunction::ShowDaily)) {
         return GotoSection(SectionID::Missions_DailyGoals);
       } else if (MapKey::IsDown(GameFunction::ShowGifts)) {
-        return GotoSection(SectionID::Shop_List);
+        // Follow the game's own gifts deep link (as the HUD CLAIM button does) so we land
+        // directly on the GIFTS tab; fall back to a plain section change if unavailable.
+        if (!ShortcutsManager::OpenGifts()) {
+          GotoSection(SectionID::Shop_List);
+        }
+        return;
       } else if (MapKey::IsDown(GameFunction::ShowAlliance)) {
         return GotoSection(SectionID::Alliance_Main);
       } else if (MapKey::IsDown(GameFunction::ShowAllianceHelp)) {

@@ -437,7 +437,7 @@ show_factions = "F"
 show_galaxy = "G"
 
 # Go to Gifts
-show_gifts = "/"
+show_gifts = "K"
 
 # Go to Inventory
 show_inventory = "I"

@@ -134,7 +134,7 @@ namespace Shortcuts
   constexpr const char* show_exocomp          = "X";
   constexpr const char* show_factions         = "F";
   constexpr const char* show_galaxy           = "G";
-  constexpr const char* show_gifts            = "/";
+  constexpr const char* show_gifts            = "K";
   constexpr const char* show_inventory        = "I";
   constexpr const char* show_lookup           = "L";
   constexpr const char* show_missions         = "M";
