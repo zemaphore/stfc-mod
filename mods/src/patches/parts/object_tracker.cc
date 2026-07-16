@@ -24,10 +24,12 @@
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
+#include <algorithm>
 #include <mutex>
 
 std::mutex                                                   tracked_objects_mutex;
 eastl::unordered_map<Il2CppClass*, eastl::vector<uintptr_t>> tracked_objects;
+eastl::unordered_map<uintptr_t, Il2CppGCHandle>               tracked_object_handles;
 
 void add_to_tracking_recursive(Il2CppClass* klass, void* _this)
 {
@@ -36,35 +38,13 @@ void add_to_tracking_recursive(Il2CppClass* klass, void* _this)
   }
 
   auto& tracked_object_vector = tracked_objects[klass];
-  tracked_object_vector.emplace_back(uintptr_t(_this));
+  const auto object            = uintptr_t(_this);
+  if (std::find(tracked_object_vector.begin(), tracked_object_vector.end(), object)
+      == tracked_object_vector.end()) {
+    tracked_object_vector.emplace_back(object);
+  }
 
   return add_to_tracking_recursive(klass->parent, _this);
-}
-
-void remove_from_tracking_all(void* _this)
-{
-#define GET_CLASS(obj) ((Il2CppClass*)(((size_t)obj) & ~(size_t)1))
-  for (auto& [klass, tracked_object_vector] : tracked_objects) {
-    tracked_object_vector.erase_first(uintptr_t(_this));
-  }
-#undef GET_CLASS
-}
-
-void remove_from_tracking_recursive(Il2CppClass* klass, void* _this)
-{
-#define GET_CLASS(obj) ((Il2CppClass*)(((size_t)obj) & ~(size_t)1))
-  if (!GET_CLASS(klass)) {
-    return;
-  }
-
-  if (tracked_objects.find(klass) == tracked_objects.end()) {
-    return;
-  }
-
-  auto& tracked_object_vector = tracked_objects[GET_CLASS(klass->parent)];
-  tracked_object_vector.erase_first(uintptr_t(_this));
-  return remove_from_tracking_recursive(GET_CLASS(klass->parent), _this);
-#undef GET_CLASS
 }
 
 void* track_ctor(auto original, void* _this)
@@ -81,53 +61,28 @@ void* track_ctor(auto original, void* _this)
 
   std::scoped_lock lk{tracked_objects_mutex};
   spdlog::trace("Tracking {}({})", _this, cls->klass->name);
-  // Object death is caught by the il2cpp liveness sweep (calc_liveness_hook). We do
-  // NOT register a Boehm GC finalizer (it runs during GC_finish_collection and would
-  // have to mutate tracked_objects without holding tracked_objects_mutex — locking
-  // there deadlocks against the stop-the-world collector — which races and corrupts
-  // the container), nor detour OnDestroy (a shared inherited base method that macOS
-  // will not tolerate being hooked).
-  add_to_tracking_recursive(cls->klass, _this);
-  return obj;
-}
 
-void track_free(auto original, void* _this)
-{
-#define GET_CLASS(obj) ((Il2CppClass*)(((size_t)obj) & ~(size_t)1))
-  if (_this != nullptr) {
-    std::scoped_lock lk{tracked_objects_mutex};
-    auto             cls = (Il2CppObject*)_this;
-    remove_from_tracking_all(_this);
-    return original(_this);
-  }
-#undef GET_CLASS
-}
-
-void calc_liveness_hook(auto original, void* state)
-{
-  original(state);
-
-  std::scoped_lock                                    lk{tracked_objects_mutex};
-  eastl::vector<eastl::pair<Il2CppClass*, uintptr_t>> objects_to_free;
-  eastl::unordered_set<uintptr_t>                     objects_seen;
-#define IS_MARKED(obj) (((size_t)(obj)->klass) & (size_t)1)
-  for (auto& [klass, objects] : tracked_objects) {
-    for (auto object : objects) {
-      if (IS_MARKED((Il2CppObject*)object) && objects_seen.find(object) == objects_seen.end()) {
-        objects_to_free.emplace_back(klass, object);
-        objects_seen.emplace(object);
-      }
+  const auto object    = uintptr_t(_this);
+  const auto handle_it = tracked_object_handles.find(object);
+  if (handle_it == tracked_object_handles.end()) {
+    auto handle = il2cpp_gchandle_new_weakref(cls, false);
+    if (!handle) {
+      spdlog::warn("Unable to create weak GC handle for {}({})", _this, cls->klass->name);
+      return obj;
+    }
+    tracked_object_handles.emplace(object, handle);
+  } else if (il2cpp_gchandle_get_target(handle_it->second) != cls) {
+    il2cpp_gchandle_free(handle_it->second);
+    handle_it->second = il2cpp_gchandle_new_weakref(cls, false);
+    if (!handle_it->second) {
+      tracked_object_handles.erase(handle_it);
+      spdlog::warn("Unable to replace weak GC handle for {}({})", _this, cls->klass->name);
+      return obj;
     }
   }
 
-#undef IS_MARKED
-
-#define GET_CLASS(obj) ((Il2CppClass*)(((size_t)obj) & ~(size_t)1))
-  for (auto& [klass, object] : objects_to_free) {
-    spdlog::trace("Clearing {}({})", (void*)object, GET_CLASS(klass)->name);
-    remove_from_tracking_all((void*)object);
-  }
-#undef GET_CLASS
+  add_to_tracking_recursive(cls->klass, _this);
+  return obj;
 }
 
 static eastl::unordered_set<void*> seen_ctor;
@@ -135,16 +90,25 @@ static eastl::unordered_set<void*> seen_ctor;
 template <typename T> void TrackObject()
 {
   auto& object_class = T::get_class_helper();
+  auto  klass        = object_class.get_cls();
+  if (!klass) {
+    spdlog::warn("Unable to track an unresolved IL2CPP class");
+    return;
+  }
+
   auto  ctor         = object_class.GetMethod(".ctor");
+  if (!ctor) {
+    spdlog::warn("Unable to track {}: constructor not found", klass->name);
+    return;
+  }
+
   if (seen_ctor.find(ctor) == seen_ctor.end()) {
     SPUD_STATIC_DETOUR(ctor, track_ctor);
     seen_ctor.emplace(ctor);
   }
 
-  // NOTE: OnDestroy is intentionally not detoured. Most tracked types do not declare
-  // their own OnDestroy; GetMethod resolves it to a shared inherited base method, and
-  // detouring that (repeatedly / with a fragile trampoline) crashes on macOS. Object
-  // death is instead caught by the il2cpp liveness sweep (calc_liveness_hook).
+  // Object lifetime is observed through a weak IL2CPP GC handle. Avoid detouring
+  // inherited OnDestroy methods or the process-wide liveness finalizer.
 }
 
 void InstallObjectTrackers()
@@ -166,6 +130,4 @@ void InstallObjectTrackers()
   TrackObject<OfficerAssignmentViewController>();
   TrackObject<ElementSelectorViewController>();
   TrackObject<StarNodeObjectViewerWidget>();
-
-  SPUD_STATIC_DETOUR(il2cpp_unity_liveness_finalize, calc_liveness_hook);
 }

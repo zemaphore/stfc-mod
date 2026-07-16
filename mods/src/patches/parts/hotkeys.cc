@@ -1,4 +1,5 @@
 #include "config.h"
+#include "file.h"
 
 #include <spud/detour.h>
 
@@ -75,7 +76,9 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
-  std::ofstream cargo_file("community_patch_cargo.csv", std::ios::out | std::ios::trunc);
+  auto          cargo_path = File::MakePath("community_patch_cargo.csv", true);
+  std::ofstream cargo_file;
+  cargo_file.open(cargo_path, std::ios::out | std::ios::trunc);
   if (!cargo_file) {
     spdlog::warn("Unable to write cargo CSV for dock {}", dock_index + 1);
     return;
