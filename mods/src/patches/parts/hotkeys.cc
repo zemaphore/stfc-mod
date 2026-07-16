@@ -277,7 +277,14 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
         return GotoSection(SectionID::Bookmarks_Main);
       } else if (MapKey::IsDown(GameFunction::ShowLookup)) {
-        return GotoSection(SectionID::Bookmarks_Search_Coordinates);
+        auto bookmark_manager = BookmarksManager::Instance();
+        if (bookmark_manager) {
+          bookmark_manager->ViewCoordinateSearch();
+          return;
+        }
+        spdlog::warn("[ShowLookup] BookmarksManager instance not available, falling back to main bookmarks");
+        GotoSection(SectionID::Bookmarks_Main);
+        return;
       } else if (MapKey::IsDown(GameFunction::ShowRefinery)) {
         return GotoSection(SectionID::Shop_Refining_List);
       } else if (MapKey::IsDown(GameFunction::ShowFactions)) {
@@ -768,8 +775,10 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
                star_node_object_viewer_widget && star_node_object_viewer_widget->Context) {
       if (has_secondary) {
         star_node_object_viewer_widget->OnViewButtonActivation();
+        return;
       } else if (has_primary) {
         star_node_object_viewer_widget->InitiateWarp();
+        return;
       }
     } else if (auto navigation_ui_controller = ObjectFinder<NavigationInteractionUIViewController>::Get();
                navigation_ui_controller && has_primary) {
@@ -796,9 +805,14 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
         navigation_ui_controller->OnSetCourseButtonClick();
         return;
       }
-    } else if (has_recall && DidExecuteRecall(fleet_bar)) {
+    }
+
+    if (has_recall && DidExecuteRecall(fleet_bar)) {
+      force_space_action_next_frame = false;
       return;
-    } else if (has_repair && DidExecuteRepair(fleet_bar)) {
+    }
+    if (has_repair && DidExecuteRepair(fleet_bar)) {
+      force_space_action_next_frame = false;
       return;
     }
   }
