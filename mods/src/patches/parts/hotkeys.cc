@@ -60,6 +60,34 @@ void     GotoSection(SectionID sectionID, void* screen_data = nullptr);
 bool     CanHideViewers();
 bool     DidHideViewers();
 
+void ExportCargoForDock(int32_t dock_index)
+{
+  auto fleets_manager = FleetsManager::Instance();
+  auto fleet          = fleets_manager ? fleets_manager->GetFleetPlayerData(dock_index) : nullptr;
+  auto cargo_hold     = fleet ? fleet->CCargoHoldData : nullptr;
+  if (!cargo_hold) {
+    return;
+  }
+
+  auto unprotected_cargo = cargo_hold->UnprotectedCargoProgress;
+  auto protected_cargo   = cargo_hold->ProtectedCargoProgress;
+  if (!unprotected_cargo || !protected_cargo) {
+    return;
+  }
+
+  std::ofstream cargo_file("community_patch_cargo.csv", std::ios::out | std::ios::trunc);
+  if (!cargo_file) {
+    spdlog::warn("Unable to write cargo CSV for dock {}", dock_index + 1);
+    return;
+  }
+
+  cargo_file << "dock;currentCargo;protectedCargo;totalCargo\n";
+  cargo_file << dock_index + 1 << ";";
+  cargo_file << std::fixed << std::setprecision(0) << unprotected_cargo->CurrentValue << ";";
+  cargo_file << protected_cargo->MaxValue << ";";
+  cargo_file << unprotected_cargo->MaxValue << "\n";
+}
+
 bool MoveOfficerCanvas(bool goLeft)
 {
   auto selectors = ObjectFinder<ElementSelectorViewController>::GetAll();
@@ -118,25 +146,27 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 #endif
 
   int32_t ship_select_request = -1;
-  if (MapKey::IsDownUnsafe(GameFunction::SelectShip1)) {
+  if (MapKey::IsDownAllowingShift(GameFunction::SelectShip1)) {
     ship_select_request = 0;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip2)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip2)) {
     ship_select_request = 1;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip3)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip3)) {
     ship_select_request = 2;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip4)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip4)) {
     ship_select_request = 3;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip5)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip5)) {
     ship_select_request = 4;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip6)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip6)) {
     ship_select_request = 5;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip7)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip7)) {
     ship_select_request = 6;
-  } else if (MapKey::IsDownUnsafe(GameFunction::SelectShip8)) {
+  } else if (MapKey::IsDownAllowingShift(GameFunction::SelectShip8)) {
     ship_select_request = 7;
   }
 
   if (ship_select_request != -1 && !Key::IsInputFocused()) {
+    ExportCargoForDock(ship_select_request);
+
     auto fleet_bar  = ObjectFinder<FleetBarViewController>::Get();
     auto can_locate = !config->disable_preview_locate || !CanHideViewers();
 
@@ -164,27 +194,6 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
           NavigationSectionManager::Instance()->SNavigationManager->HideInteraction();
         }
         FleetsManager::Instance()->RequestViewFleet(fleet, true);
-      }
-
-      if (already_selected && fleet) {
-        auto cargoHold = fleet->CCargoHoldData;
-        if (cargoHold != 0 && cargoHold->UnprotectedCargoProgress != 0 && cargoHold->ProtectedCargoProgress != 0) {
-          std::ofstream cargo_file("community_patch_cargo.csv");
-
-          auto dock           = ship_select_request + 1;
-          auto currentCargo   = cargoHold->UnprotectedCargoProgress->CurrentValue;
-          auto protectedCargo = cargoHold->ProtectedCargoProgress->MaxValue;
-          auto totalCargo     = cargoHold->UnprotectedCargoProgress->MaxValue;
-
-          cargo_file << "dock;currentCargo;protectedCargo;totalCargo" << std::endl;
-          cargo_file << dock << ";";
-          cargo_file << std::fixed << std::setprecision(0) << currentCargo << ";";
-          cargo_file << std::fixed << std::setprecision(0) << protectedCargo << ";";
-          cargo_file << std::fixed << std::setprecision(0) << totalCargo;
-          cargo_file << std::endl;
-
-          cargo_file.close();
-        }
       }
 
       return;

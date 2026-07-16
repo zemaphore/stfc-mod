@@ -91,14 +91,26 @@ bool MapKey::IsPressed(GameFunction gameFunction)
   return false;
 }
 
-bool MapKey::IsDownUnsafe(GameFunction gameFunction)
+bool MapKey::IsDownAllowingShift(GameFunction gameFunction)
 {
   const auto &mapKeys = MapKey::mappedKeys[(int)gameFunction];
   for (const MapKey &mapKey : mapKeys) {
-    if (mapKey.Key != KeyCode::None) {
-      if (Key::Down(mapKey.Key)) {
-        return true;
-      }
+    if (mapKey.Key == KeyCode::None || !Key::Down(mapKey.Key)) {
+      continue;
+    }
+
+    if (MapKey::HasCorrectModifiers(mapKey)) {
+      return true;
+    }
+
+    const auto has_non_shift_modifier =
+        Key::Pressed(KeyCode::LeftAlt) || Key::Pressed(KeyCode::RightAlt) || Key::Pressed(KeyCode::AltGr)
+        || Key::Pressed(KeyCode::LeftControl) || Key::Pressed(KeyCode::RightControl)
+        || Key::Pressed(KeyCode::LeftApple) || Key::Pressed(KeyCode::RightApple)
+        || Key::Pressed(KeyCode::LeftCommand) || Key::Pressed(KeyCode::RightCommand)
+        || Key::Pressed(KeyCode::LeftWindows) || Key::Pressed(KeyCode::RightWindows);
+    if (!mapKey.hasModifiers && Key::HasShift() && !has_non_shift_modifier) {
+      return true;
     }
   }
 
