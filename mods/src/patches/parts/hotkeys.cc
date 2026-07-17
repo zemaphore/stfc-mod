@@ -76,6 +76,9 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
+  auto hull      = fleet->Hull;
+  auto ship_name = hull && hull->Name ? to_string(hull->Name) : "";
+
   auto          cargo_path = File::MakePath("community_patch_cargo.csv", true);
   std::ofstream cargo_file;
   cargo_file.open(cargo_path, std::ios::out | std::ios::trunc);
@@ -84,11 +87,12 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
-  cargo_file << "dock;currentCargo;protectedCargo;totalCargo\n";
+  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName\n";
   cargo_file << dock_index + 1 << ";";
   cargo_file << std::fixed << std::setprecision(0) << unprotected_cargo->CurrentValue << ";";
   cargo_file << protected_cargo->MaxValue << ";";
-  cargo_file << unprotected_cargo->MaxValue << "\n";
+  cargo_file << unprotected_cargo->MaxValue << ";";
+  cargo_file << ship_name << "\n";
 }
 
 bool MoveOfficerCanvas(bool goLeft)
