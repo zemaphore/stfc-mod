@@ -23,8 +23,10 @@
 #include "prime/FleetLocalViewController.h"
 #include "prime/FleetsManager.h"
 #include "prime/FullScreenChatViewController.h"
+#include "prime/GameWorldManager.h"
 #include "prime/Hub.h"
 #include "prime/KeyCode.h"
+#include "prime/LocaleUtilities.h"
 #include "prime/NavigationInteractionUIViewController.h"
 #include "prime/NavigationSectionManager.h"
 #include "prime/PreScanTargetWidget.h"
@@ -61,6 +63,38 @@ void     GotoSection(SectionID sectionID, void* screen_data = nullptr);
 bool     CanHideViewers();
 bool     DidHideViewers();
 
+std::string GetFleetSystemName(FleetPlayerData* fleet)
+{
+  auto address = fleet ? fleet->Address : nullptr;
+  if (!address) {
+    return "";
+  }
+
+  const auto system_id = address->System;
+  if (system_id == -1) {
+    return "";
+  }
+
+  auto       game_world = GameWorldManager::Instance();
+  GalaxyNode galaxy_node;
+  if (!game_world || !game_world->TryGetGalaxyNode(system_id, &galaxy_node)) {
+    return "";
+  }
+
+  int64_t translation_id = 0;
+  if (!galaxy_node.TryGetTranslationId(&translation_id)) {
+    return "";
+  }
+
+  auto context = LocaleTextContext::Create("title_{0}", "entity");
+  if (!context || !context->ApplyIdentifierParameter(translation_id) || !LocaleUtilities::HasTranslation(context)) {
+    return "";
+  }
+
+  auto system_name = LocaleUtilities::Localize(context);
+  return system_name ? to_string(system_name) : "";
+}
+
 void ExportCargoForDock(int32_t dock_index)
 {
   auto fleets_manager = FleetsManager::Instance();
@@ -76,8 +110,9 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
-  auto hull      = fleet->Hull;
-  auto ship_name = hull && hull->Name ? to_string(hull->Name) : "";
+  auto hull        = fleet->Hull;
+  auto ship_name   = hull && hull->Name ? to_string(hull->Name) : "";
+  auto system_name = GetFleetSystemName(fleet);
 
   auto          cargo_path = File::MakePath("community_patch_cargo.csv", true);
   std::ofstream cargo_file;
@@ -87,12 +122,13 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
-  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName\n";
+  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName;systemName\n";
   cargo_file << dock_index + 1 << ";";
   cargo_file << std::fixed << std::setprecision(0) << unprotected_cargo->CurrentValue << ";";
   cargo_file << protected_cargo->MaxValue << ";";
   cargo_file << unprotected_cargo->MaxValue << ";";
-  cargo_file << ship_name << "\n";
+  cargo_file << ship_name << ";";
+  cargo_file << system_name << "\n";
 }
 
 bool MoveOfficerCanvas(bool goLeft)
