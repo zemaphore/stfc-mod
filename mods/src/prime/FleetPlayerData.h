@@ -4,6 +4,7 @@
 #include "HullSpec.h"
 #include "NodeAddress.h"
 #include "RecallRequirement.h"
+#include "Vector3.h"
 #include "CanRepairRequirement.h"
 
 #include <cstdint>
@@ -97,6 +98,8 @@ public:
   __declspec(property(get = __get_CargoHoldData)) CargoHoldData* CCargoHoldData;
   __declspec(property(get = __get_Hull)) HullSpec* Hull;
   __declspec(property(get = __get_Address)) NodeAddress* Address;
+  __declspec(property(get = __get_GalaxyPosition)) Vector3 GalaxyPosition;
+  __declspec(property(get = __get_SystemPosition)) Vector3 SystemPosition;
 
 private:
   static IL2CppClassHelper& get_class_helper()
@@ -116,6 +119,21 @@ public:
   {
     static auto property = get_class_helper().GetProperty("Address");
     return property.GetRaw<NodeAddress>(this);
+  }
+  // Positions come from ILocationData and are backed by the private LocationData field. A docked
+  // fleet reports its station's position in the system, so these stay valid in every fleet state.
+  // Note the world plane is XZ: use x/z for the coordinates the game displays, y is the up-axis.
+  Vector3 __get_GalaxyPosition()
+  {
+    static auto property = get_class_helper().GetProperty("GalaxyPosition");
+    auto        value    = property.Get<Vector3>(this);
+    return value ? *value : Vector3{};
+  }
+  Vector3 __get_SystemPosition()
+  {
+    static auto property = get_class_helper().GetProperty("SystemPosition");
+    auto        value    = property.Get<Vector3>(this);
+    return value ? *value : Vector3{};
   }
   // Backing field: the game exposes no property for the cargo hold.
   CargoHoldData* __get_CargoHoldData()

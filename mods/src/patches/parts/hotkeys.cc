@@ -113,6 +113,9 @@ void ExportCargoForDock(int32_t dock_index)
   auto hull        = fleet->Hull;
   auto ship_name   = hull && hull->Name ? to_string(hull->Name) : "";
   auto system_name = GetFleetSystemName(fleet);
+  auto address     = fleet->Address;
+  auto system_id   = address ? address->System : -1;
+  auto position    = fleet->SystemPosition;
 
   auto          cargo_path = File::MakePath("community_patch_cargo.csv", true);
   std::ofstream cargo_file;
@@ -122,13 +125,18 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
-  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName;systemName\n";
+  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName;systemName;systemId;x;y\n";
   cargo_file << dock_index + 1 << ";";
   cargo_file << std::fixed << std::setprecision(0) << unprotected_cargo->CurrentValue << ";";
   cargo_file << protected_cargo->MaxValue << ";";
   cargo_file << unprotected_cargo->MaxValue << ";";
   cargo_file << ship_name << ";";
-  cargo_file << system_name << "\n";
+  cargo_file << system_name << ";";
+  cargo_file << system_id << ";";
+  // The system plane is XZ; Vector3.y is the unused Unity up-axis. BookmarksManager compares a
+  // bookmark's YCoordinate against SystemPosition.z, so that is the coordinate the game displays.
+  cargo_file << std::setprecision(2) << position.x << ";";
+  cargo_file << position.z << "\n";
 }
 
 bool MoveOfficerCanvas(bool goLeft)
