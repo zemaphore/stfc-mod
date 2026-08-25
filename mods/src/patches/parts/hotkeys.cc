@@ -15,10 +15,11 @@
 
 #include "prime/ActionQueueManager.h"
 #include "prime/AnimatedRewardsScreenViewController.h"
-#include "prime/ElementSelectorViewController.h"
+#include "prime/ArtifactHallDetailsViewController.h"
 #include "prime/BookmarksManager.h"
 #include "prime/ChatManager.h"
 #include "prime/DeploymentManager.h"
+#include "prime/ElementSelectorViewController.h"
 #include "prime/FleetBarViewController.h"
 #include "prime/FleetLocalViewController.h"
 #include "prime/FleetsManager.h"
@@ -139,6 +140,27 @@ void ExportCargoForDock(int32_t dock_index)
   cargo_file << position.z << "\n";
 }
 
+void CycleAutoConfirmInstantWarp(Config& config)
+{
+  const char* state = nullptr;
+  switch (config.auto_confirm_instant_warp) {
+    case InstantWarpConfirmation::None:
+      config.auto_confirm_instant_warp = InstantWarpConfirmation::Warp;
+      state                            = "warp";
+      break;
+    case InstantWarpConfirmation::Warp:
+      config.auto_confirm_instant_warp = InstantWarpConfirmation::Jump;
+      state                            = "jump";
+      break;
+    case InstantWarpConfirmation::Jump:
+      config.auto_confirm_instant_warp = InstantWarpConfirmation::None;
+      state                            = "none";
+      break;
+  }
+
+  spdlog::info("Auto-confirm instant warp set to {}", state);
+}
+
 bool MoveOfficerCanvas(bool goLeft)
 {
   auto selectors = ObjectFinder<ElementSelectorViewController>::GetAll();
@@ -155,6 +177,32 @@ bool MoveOfficerCanvas(bool goLeft)
       selector->PressDecrement();
     } else {
       selector->PressIncrement();
+    }
+    acted = true;
+  }
+
+  return acted;
+}
+
+bool MoveArtifactCanvas(bool goLeft)
+{
+  bool acted = false;
+  for (auto controller : ObjectFinder<ArtifactHallDetailsViewController>::GetAll()) {
+    if (!controller) {
+      spdlog::trace("MoveArtifactCanvas({}) - No controller", (int)goLeft);
+      continue;
+    }
+
+    if (!controller->isActiveAndEnabled()) {
+      spdlog::trace("MoveArtifactCanvas({}) - Controller not active", (int)goLeft);
+    }
+
+    if (goLeft) {
+      spdlog::debug("MoveArtifactCanvas({}) - Pressing Left Arrow", (int)goLeft);
+      controller->PressLeftArrow();
+    } else {
+      spdlog::debug("MoveArtifactCanvas({}) - Pressing Right Arrow", (int)goLeft);
+      controller->PressRightArrow();
     }
     acted = true;
   }
@@ -300,14 +348,14 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       }
 
       if (MapKey::IsDown(GameFunction::MoveLeft)) {
-        auto const result = MoveOfficerCanvas(true);
+        auto const result = MoveArtifactCanvas(true) || MoveOfficerCanvas(true);
         if (result) {
           return;
         }
       }
 
       if (MapKey::IsDown(GameFunction::MoveRight)) {
-        auto const result = MoveOfficerCanvas(false);
+        auto const result = MoveArtifactCanvas(false) || MoveOfficerCanvas(false);
         if (result) {
           return;
         }
@@ -391,10 +439,16 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         config->AdjustUiScale(true);
       } else if (MapKey::IsPressed(GameFunction::UiScaleDown)) {
         config->AdjustUiScale(false);
+      } else if (MapKey::IsPressed(GameFunction::UiShipScaleUp)) {
+        config->AdjustUiShipScale(true);
+      } else if (MapKey::IsPressed(GameFunction::UiShipScaleDown)) {
+        config->AdjustUiShipScale(false);
       } else if (MapKey::IsPressed(GameFunction::UiViewerScaleUp)) {
         config->AdjustUiViewerScale(true);
       } else if (MapKey::IsPressed(GameFunction::UiViewerScaleDown)) {
         config->AdjustUiViewerScale(false);
+      } else if (MapKey::IsDown(GameFunction::ToggleAutoConfirmInstantWarp)) {
+        CycleAutoConfirmInstantWarp(*config);
       } else if (MapKey::IsDown(GameFunction::TogglePreviewLocate)) {
         config->disable_preview_locate = !config->disable_preview_locate;
       } else if (MapKey::IsDown(GameFunction::TogglePreviewRecall)) {
@@ -434,7 +488,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         spdlog::flush_on(spdlog::level::trace);
         // spdlog::log("Setting log level to TRACE");
       } else if (MapKey::IsDown(GameFunction::ShowShips)) {
-        auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+        auto fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
         auto fleet_controller = fleet_bar ? fleet_bar->_fleetPanelController : nullptr;
         auto fleet            = fleet_controller ? fleet_controller->fleet : nullptr;
         if (fleet) {
@@ -511,12 +565,12 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
 
       for (auto& pre_scan_widget : all_pre_scan_widgets) {
-        auto visibility_controller = pre_scan_widget ? pre_scan_widget->_visibilityController : nullptr;
-        auto rewardsWidget         = pre_scan_widget ? pre_scan_widget->_rewardsButtonWidget : nullptr;
-        auto rewards_controller    = rewardsWidget ? rewardsWidget->_rewardsController : nullptr;
-        const auto pre_scan_visible = visibility_controller
-                                      && (visibility_controller->_state == VisibilityState::Visible
-                                          || visibility_controller->_state == VisibilityState::Show);
+        auto       visibility_controller = pre_scan_widget ? pre_scan_widget->_visibilityController : nullptr;
+        auto       rewardsWidget         = pre_scan_widget ? pre_scan_widget->_rewardsButtonWidget : nullptr;
+        auto       rewards_controller    = rewardsWidget ? rewardsWidget->_rewardsController : nullptr;
+        const auto pre_scan_visible      = visibility_controller
+                                           && (visibility_controller->_state == VisibilityState::Visible
+                                               || visibility_controller->_state == VisibilityState::Show);
         if (pre_scan_visible && rewards_controller) {
           const auto rewards_widget_visible = rewards_controller->_state == VisibilityState::Visible
                                               || rewards_controller->_state == VisibilityState::Show;
@@ -627,7 +681,7 @@ inline bool DidExecuteFleetAction(std::string_view actionText, ActionType action
   if (!fleet) {
     return false;
   }
-  auto fleet_state      = fleet->CurrentState;
+  auto fleet_state = fleet->CurrentState;
 
   auto       fleet_id   = fleet->Id;
   auto       prev_state = fleet->PreviousState;
@@ -944,8 +998,8 @@ void OnDidBindContext_Hook(auto original, RewardsButtonWidget* _this)
   original(_this);
 
   rewards_controller = _this->_rewardsController;
-  auto post_state = rewards_controller ? rewards_controller->_state : VisibilityState::Unknown;
-  post_state      = post_state;
+  auto post_state    = rewards_controller ? rewards_controller->_state : VisibilityState::Unknown;
+  post_state         = post_state;
   if (rewards_controller && CheckShowCargo(_this)) {
     rewards_controller->Show(true);
     show_info_pending = 1;

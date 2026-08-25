@@ -19,7 +19,7 @@ feature.
 | Dock shortcuts | Dock selection is state-based and deterministic, not dependent on the `select_timer` double-tap window. |
 | Cargo export | Every valid dock shortcut press rewrites `community_patch_cargo.csv` with that fleet's cargo, ship, system, and position. |
 | Gifts shortcut | The default binding is `K` and opens the Gifts/Chests shop tab through the game's Gifts deep link. |
-| Object tracking | Tracked UI objects use weak IL2CPP GC handles without GC-finalizer, liveness-finalizer, or inherited `OnDestroy` detours. |
+| Object tracking | ObjectFinder-backed shortcuts remain stable after accepting upstream main's tracker implementation. |
 
 ## 1. Deterministic dock shortcuts
 
@@ -135,13 +135,19 @@ navigation and must not crash.
 - [ ] Open Gifts repeatedly from several sections and confirm navigation remains responsive.
 - [ ] Check logs for missing `_giftsDeepLink` or `OpenShop` bindings after a game update.
 
-## 4. Weak-handle object tracking and macOS stability
+## 4. Object tracking and macOS stability
 
-The custom object tracker exists to support hotkeys that need to find live Unity view controllers and widgets. The inherited
-implementation could crash macOS during startup or garbage collection because it mutated tracking state from a Boehm GC
-finalizer and installed repeated detours on shared inherited `OnDestroy` methods.
+The object tracker supports hotkeys that need to find live Unity view controllers and widgets. The pre-merge custom
+implementation was introduced after crashes on macOS during startup and garbage collection, where tracking state was
+mutated from a Boehm GC finalizer and shared inherited `OnDestroy` methods received overlapping detours.
 
-The custom lifetime model is:
+During the `upstream/main` merge, the tracker conflict was intentionally resolved to upstream. Upstream retains its GC
+finalizer, liveness-finalizer hook, and `OnDestroy` detours, but includes newer macOS ARM64 detour fixes and tracks
+`FleetMeshSelector` and `ArtifactHallDetailsViewController`. This implementation must be evaluated through runtime testing
+rather than assumed equivalent to the custom fix.
+
+The replaced custom lifetime model remains available in commits `388ed6c` and `40a729a` as the fallback if the upstream
+implementation regresses. It:
 
 - Hook each distinct tracked constructor once.
 - Create one weak IL2CPP GC handle per object address.
@@ -172,14 +178,14 @@ These files carry the fork-specific intent and deserve explicit review after res
 | --- | --- |
 | `mods/src/patches/parts/hotkeys.cc` | Deterministic dock state machine, export on every dock press, and Gifts deep-link navigation. |
 | `mods/src/patches/mapkey.h`, `mapkey.cc` | Allow `Shift` with plain dock bindings without accepting unrelated modifiers. |
-| `mods/src/patches/parts/object_tracker.cc`, `mods/src/il2cpp/il2cpp_helper.h` | Mutex-protected weak-handle lifetime tracking and stale-object cleanup. |
+| `mods/src/patches/parts/object_tracker.cc`, `mods/src/il2cpp/il2cpp_helper.h` | Upstream tracker accepted intentionally; validate all ObjectFinder-dependent behavior and macOS stability. |
 | `mods/src/prime/FleetPlayerData.h` | Cargo, address, hull, and system-position accessors. |
 | `mods/src/prime/GalaxyNode.h`, `GameWorldManager.h`, `LocaleUtilities.h`, `NodeAddress.h` | System ID/name/coordinate lookup used by CSV export. |
 | `mods/src/prime/ShortcutsManager.h` | Direct Gifts deep-link wrapper and safe fallback signal. |
 | `mods/src/defaultconfig.h`, `example_community_patch_settings.toml` | Default Gifts binding of `K`. |
 
-The predicted upstream merge conflicts in `hotkeys.cc`, `object_tracker.cc`, `defaultconfig.h`, and the example TOML overlap
-directly with this behavior. Conflict resolution is not complete until each corresponding checklist section passes.
+The `upstream/main` merge conflicts in `hotkeys.cc`, `object_tracker.cc`, and the example TOML overlap directly with this
+behavior. Conflict resolution is not complete until each corresponding checklist section passes.
 
 ## Custom commit inventory
 

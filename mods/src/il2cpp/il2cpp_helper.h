@@ -12,8 +12,6 @@
 #include <EASTL/unordered_map.h>
 #include <EASTL/vector.h>
 
-#include <mutex>
-
 #if !_WIN32
 #include <syslog.h>
 #include <unistd.h>
@@ -354,64 +352,24 @@ template <typename T> inline T* il2cpp_get_array_element(Il2CppArray* array, siz
 }
 
 extern eastl::unordered_map<Il2CppClass*, eastl::vector<uintptr_t>> tracked_objects;
-extern eastl::unordered_map<uintptr_t, Il2CppGCHandle>               tracked_object_handles;
-extern std::mutex                                                    tracked_objects_mutex;
 
 template <typename T> class ObjectFinder
 {
 public:
   static T* Get()
   {
-    std::scoped_lock lock{tracked_objects_mutex};
     auto& objects = tracked_objects[T::get_class_helper().get_cls()];
-    while (!objects.empty()) {
-      const auto object    = objects.back();
-      const auto handle_it = tracked_object_handles.find(object);
-      if (handle_it == tracked_object_handles.end()) {
-        objects.pop_back();
-        continue;
-      }
-
-      auto target = il2cpp_gchandle_get_target(handle_it->second);
-      if (target) {
-        return reinterpret_cast<T*>(target);
-      }
-
-      il2cpp_gchandle_free(handle_it->second);
-      tracked_object_handles.erase(handle_it);
-      objects.pop_back();
+    if (objects.empty()) {
+      // TODO: assert?
+      return nullptr;
     }
-
-    return nullptr;
+    return reinterpret_cast<T*>(objects.back());
   }
 
   static eastl::span<T*> GetAll()
   {
-    static thread_local eastl::vector<T*> live_objects;
-    live_objects.clear();
-
-    std::scoped_lock lock{tracked_objects_mutex};
     auto& objects = tracked_objects[T::get_class_helper().get_cls()];
-    for (auto object_it = objects.begin(); object_it != objects.end();) {
-      const auto handle_it = tracked_object_handles.find(*object_it);
-      if (handle_it == tracked_object_handles.end()) {
-        object_it = objects.erase(object_it);
-        continue;
-      }
-
-      auto target = il2cpp_gchandle_get_target(handle_it->second);
-      if (!target) {
-        il2cpp_gchandle_free(handle_it->second);
-        tracked_object_handles.erase(handle_it);
-        object_it = objects.erase(object_it);
-        continue;
-      }
-
-      live_objects.emplace_back(reinterpret_cast<T*>(target));
-      ++object_it;
-    }
-
-    return {live_objects.data(), live_objects.data() + live_objects.size()};
+    return {reinterpret_cast<T**>(objects.data()), reinterpret_cast<T**>(objects.data()) + objects.size()};
   }
 };
 
