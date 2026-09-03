@@ -220,10 +220,6 @@ jobs:
             runner: macos-26
             artifact: macos-arm64-build
 
-          - arch: x86_64
-            runner: macos-26-intel
-            artifact: macos-x86_64-build
-
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.5"
@@ -450,23 +446,14 @@ jobs:
           test -f "$RELEASE/macOSLauncher"
           test -f "$RELEASE/stfc-community-mod-loader"
           test -f "$RELEASE/libstfc-community-mod.dylib"
+          test -d "$RELEASE/macOSLauncher.app"
 
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            test -d "$RELEASE/macOSLauncher.app"
-
-            tar -cf "$ARCHIVE" \
-              -C "$RELEASE" \
-              macOSLauncher \
-              stfc-community-mod-loader \
-              libstfc-community-mod.dylib \
-              macOSLauncher.app
-          else
-            tar -cf "$ARCHIVE" \
-              -C "$RELEASE" \
-              macOSLauncher \
-              stfc-community-mod-loader \
-              libstfc-community-mod.dylib
-          fi
+          tar -cf "$ARCHIVE" \
+            -C "$RELEASE" \
+            macOSLauncher \
+            stfc-community-mod-loader \
+            libstfc-community-mod.dylib \
+            macOSLauncher.app
 
       - name: Upload intermediate build
         uses: actions/upload-artifact@v7
@@ -538,34 +525,21 @@ jobs:
           name: macos-arm64-build
           path: .artifacts/arm64
 
-      - name: Download x86_64 build
-        uses: actions/download-artifact@v8
-        with:
-          name: macos-x86_64-build
-          path: .artifacts/x86_64
-
       - name: Restore architecture builds
         shell: bash
         run: |
           set -euo pipefail
 
           mkdir -p build/macosx/arm64/release
-          mkdir -p build/macosx/x86_64/release
 
           tar -xf .artifacts/arm64/macos-arm64-build.tar \
             -C build/macosx/arm64/release
 
-          tar -xf .artifacts/x86_64/macos-x86_64-build.tar \
-            -C build/macosx/x86_64/release
-
           test -f build/macosx/arm64/release/macOSLauncher
-          test -f build/macosx/x86_64/release/macOSLauncher
 
           test -f build/macosx/arm64/release/stfc-community-mod-loader
-          test -f build/macosx/x86_64/release/stfc-community-mod-loader
 
           test -f build/macosx/arm64/release/libstfc-community-mod.dylib
-          test -f build/macosx/x86_64/release/libstfc-community-mod.dylib
 
           test -f \
             build/macosx/arm64/release/macOSLauncher.app/Contents/Resources/Assets.car
@@ -573,27 +547,12 @@ jobs:
           test -f \
             build/macosx/arm64/release/macOSLauncher.app/Contents/Info.plist
 
-      - name: Create universal App Bundle
+      - name: Finalize App Bundle
         shell: bash
         run: |
           set -euo pipefail
 
           APP="build/macosx/arm64/release/macOSLauncher.app"
-
-          lipo -create \
-            build/macosx/arm64/release/macOSLauncher \
-            build/macosx/x86_64/release/macOSLauncher \
-            -output "$APP/Contents/MacOS/macOSLauncher"
-
-          lipo -create \
-            build/macosx/arm64/release/stfc-community-mod-loader \
-            build/macosx/x86_64/release/stfc-community-mod-loader \
-            -output "$APP/Contents/stfc-community-mod-loader"
-
-          lipo -create \
-            build/macosx/arm64/release/libstfc-community-mod.dylib \
-            build/macosx/x86_64/release/libstfc-community-mod.dylib \
-            -output "$APP/Contents/libstfc-community-mod.dylib"
 
           cp assets/launcher.icns \
             "$APP/Contents/Resources/"
@@ -611,34 +570,33 @@ jobs:
           test -f "$FINAL_APP/Contents/stfc-community-mod-loader"
           test -f "$FINAL_APP/Contents/libstfc-community-mod.dylib"
 
-      - name: Verify universal binaries
+      - name: Verify App Bundle binaries
         shell: bash
         run: |
           set -euo pipefail
 
           APP="build/macosx/arm64/release/STFC Community Mod.app"
 
-          verify_universal() {
+          verify_archs() {
             local file="$1"
             local archs
 
             archs="$(lipo -archs "$file")"
             echo "$file: $archs"
 
-            [[ " $archs " == *" arm64 "* ]]
-            [[ " $archs " == *" x86_64 "* ]]
+            [[ "$archs" == "arm64" ]]
           }
 
-          verify_universal \
+          verify_archs \
             "$APP/Contents/MacOS/macOSLauncher"
 
-          verify_universal \
+          verify_archs \
             "$APP/Contents/stfc-community-mod-loader"
 
-          verify_universal \
+          verify_archs \
             "$APP/Contents/libstfc-community-mod.dylib"
 
-      - name: Verify universal app linkage
+      - name: Verify App Bundle linkage
         shell: bash
         run: |
           set -euo pipefail
