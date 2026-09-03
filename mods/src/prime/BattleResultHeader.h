@@ -2,6 +2,8 @@
 
 #include <il2cpp/il2cpp_helper.h>
 
+#include <cstdint>
+
 enum class BattleType {
   Fleet                          = 0,
   Base                           = 1,
@@ -60,6 +62,27 @@ public:
   {
     static auto prop = get_class_helper().GetProperty("BattleType");
     return *prop.Get<int>(this);
+  }
+
+  int64_t get_ID()
+  {
+    static auto prop  = get_class_helper().GetProperty("ID");
+    auto*       value = prop.Get<int64_t>(this);
+    return value ? *value : 0;
+  }
+
+  int64_t get_PlayerFleetId()
+  {
+    static auto prop  = get_class_helper().GetProperty("PlayerFleetId");
+    auto*       value = prop.Get<int64_t>(this);
+    return value ? *value : 0;
+  }
+
+  BattleResultType get_BattleResultType()
+  {
+    static auto prop  = get_class_helper().GetProperty("BattleResultType");
+    auto*       value = prop.Get<BattleResultType>(this);
+    return value ? *value : BattleResultType::Defeat;
   }
 
 private:

@@ -12,7 +12,12 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 
+#include <chrono>
+#include <cstdio>
+#include <ctime>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 #if _WIN32
 #include <windows.h>
@@ -41,6 +46,50 @@ static bool seh_call(Fn fn)
 // IL2CPP localization infrastructure
 // ---------------------------------------------------------------------------
 namespace {
+
+std::mutex                                    s_battle_export_mutex;
+std::unordered_map<int64_t, BattleExportData> s_latest_battle_by_fleet;
+
+std::string utc_timestamp_now()
+{
+  using namespace std::chrono;
+
+  const auto now          = system_clock::now();
+  const auto epochMillis  = duration_cast<milliseconds>(now.time_since_epoch());
+  const auto epochSeconds = duration_cast<seconds>(epochMillis);
+  const auto millis       = static_cast<int>(duration_cast<milliseconds>(epochMillis - epochSeconds).count());
+  const auto time         = system_clock::to_time_t(system_clock::time_point(epochSeconds));
+
+  std::tm utc{};
+#if _WIN32
+  gmtime_s(&utc, &time);
+#else
+  gmtime_r(&time, &utc);
+#endif
+
+  char timestamp[25]{};
+  std::snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", utc.tm_year + 1900, utc.tm_mon + 1,
+                utc.tm_mday, utc.tm_hour, utc.tm_min, utc.tm_sec, millis);
+  return timestamp;
+}
+
+const char* battle_result_name(BattleResultType result)
+{
+  switch (result) {
+    case BattleResultType::Defeat:
+      return "defeat";
+    case BattleResultType::Victory:
+      return "victory";
+    case BattleResultType::PartialVictory:
+      return "partialVictory";
+  }
+  return "unknown";
+}
+
+bool is_completed_fleet_battle_toast(ToastState state)
+{
+  return state == Victory || state == Defeat || state == PartialVictory;
+}
 
 struct LocaleCache {
   Il2CppClass*        ltc_class           = nullptr; // LocaleTextContext
@@ -358,6 +407,50 @@ static BattleSummaryData build_battle_data(Il2CppObject* data)
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+void battle_notify_capture(Toast* toast)
+{
+  if (!toast || !is_completed_fleet_battle_toast(static_cast<ToastState>(toast->get_State())))
+    return;
+
+  auto* data = toast->get_Data();
+  if (!data)
+    return;
+
+  auto*            header   = reinterpret_cast<BattleResultHeader*>(data);
+  int64_t          battleId = 0;
+  int64_t          fleetId  = 0;
+  BattleResultType result   = BattleResultType::Defeat;
+  if (!seh_call([&] {
+        battleId = header->get_ID();
+        fleetId  = header->get_PlayerFleetId();
+        result   = header->get_BattleResultType();
+      })) {
+    spdlog::warn("[Notify] SEH: failed to capture battle export metadata");
+    return;
+  }
+
+  if (battleId == 0 || fleetId == 0)
+    return;
+
+  std::scoped_lock lock(s_battle_export_mutex);
+  if (const auto existing = s_latest_battle_by_fleet.find(fleetId);
+      existing != s_latest_battle_by_fleet.end() && existing->second.id == battleId) {
+    return;
+  }
+
+  s_latest_battle_by_fleet.insert_or_assign(
+      fleetId, BattleExportData{battleId, battle_result_name(result), utc_timestamp_now()});
+}
+
+std::optional<BattleExportData> battle_notify_latest_for_fleet(int64_t fleetId)
+{
+  std::scoped_lock lock(s_battle_export_mutex);
+  const auto       battle = s_latest_battle_by_fleet.find(fleetId);
+  if (battle == s_latest_battle_by_fleet.end())
+    return std::nullopt;
+  return battle->second;
+}
+
 std::string battle_notify_parse(Toast* toast)
 {
   switch (toast->get_State()) {

@@ -35,6 +35,7 @@
 #include "prime/ScreenManager.h"
 #include "prime/ShortcutsManager.h"
 
+#include "patches/battle_notify_parser.h"
 #include "patches/key.h"
 #include "patches/mapkey.h"
 #include "patches/parts/focus_search.h"
@@ -117,6 +118,7 @@ void ExportCargoForDock(int32_t dock_index)
   auto address     = fleet->Address;
   auto system_id   = address ? address->System : -1;
   auto position    = fleet->SystemPosition;
+  auto last_battle = battle_notify_latest_for_fleet(static_cast<int64_t>(fleet->Id));
 
   auto          cargo_path = File::MakePath("community_patch_cargo.csv", true);
   std::ofstream cargo_file;
@@ -126,7 +128,8 @@ void ExportCargoForDock(int32_t dock_index)
     return;
   }
 
-  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName;systemName;systemId;x;y\n";
+  cargo_file << "dock;currentCargo;protectedCargo;totalCargo;shipName;systemName;systemId;x;y;lastBattleResult;"
+                "lastBattleId;lastBattleTimestampUtc\n";
   cargo_file << dock_index + 1 << ";";
   cargo_file << std::fixed << std::setprecision(0) << unprotected_cargo->CurrentValue << ";";
   cargo_file << protected_cargo->MaxValue << ";";
@@ -137,7 +140,15 @@ void ExportCargoForDock(int32_t dock_index)
   // The system plane is XZ; Vector3.y is the unused Unity up-axis. BookmarksManager compares a
   // bookmark's YCoordinate against SystemPosition.z, so that is the coordinate the game displays.
   cargo_file << std::setprecision(2) << position.x << ";";
-  cargo_file << position.z << "\n";
+  cargo_file << position.z << ";";
+  if (last_battle) {
+    cargo_file << last_battle->result << ";";
+    cargo_file << last_battle->id << ";";
+    cargo_file << last_battle->receivedAtUtc;
+  } else {
+    cargo_file << ";;";
+  }
+  cargo_file << "\n";
 }
 
 void CycleAutoConfirmInstantWarp(Config& config)

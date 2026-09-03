@@ -1,5 +1,6 @@
 #include "config.h"
 #include "errormsg.h"
+#include "patches/battle_notify_parser.h"
 #include "patches/notification_service.h"
 
 #include <il2cpp/il2cpp_helper.h>
@@ -12,6 +13,7 @@ struct ToastObserver {
 
 void ToastObserver_EnqueueToast_Hook(auto original, ToastObserver *_this, Toast *toast)
 {
+  battle_notify_capture(toast);
   notification_handle_toast(toast);
 
   if (std::ranges::find(Config::Get().disabled_banner_types, toast->get_State())
@@ -24,6 +26,7 @@ void ToastObserver_EnqueueToast_Hook(auto original, ToastObserver *_this, Toast 
 
 void ToastObserver_EnqueueOrCombineToast_Hook(auto original, ToastObserver *_this, Toast *toast, uintptr_t cmpAction)
 {
+  battle_notify_capture(toast);
   notification_handle_toast(toast);
 
   if (std::ranges::find(Config::Get().disabled_banner_types, toast->get_State())
